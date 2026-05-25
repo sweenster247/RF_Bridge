@@ -1,263 +1,185 @@
-# RF Bridge
+# RF Bridge v1.6.2
 
-RF Bridge is a lightweight Python utility that connects a tinySA spectrum analyzer to Shure Wireless Workbench (WWB) by exporting live RF scans as WWB-compatible CSV files.
+RF Bridge connects a tinySA to a Wireless Workbench-friendly CSV workflow with a live desktop RF display.
 
-Designed for live sound engineers, RF coordinators, churches, theaters, and festival workflows that want fast RF visibility without expensive proprietary hardware.
+v1.6.2 builds on the first packaged-app milestone. It keeps the stable v1.5.1 threaded PySide6/pyqtgraph UI and adds a proper macOS app launch path so RF Bridge can be built as `RF Bridge.app` with PyInstaller.
 
----
+## What changed in v1.6
 
-## Features
+- Added packaged-app launch mode for macOS builds
+- Double-clicked app bundles now launch the desktop UI by default
+- Added GUI gig/session name prompt for app launches
+- Added `--app` mode for testing the packaged-app flow from Terminal
+- Added `--gig` argument for launching without an interactive prompt
+- Added `--output-dir` override for custom scan locations
+- Improved PyInstaller spec for PySide6, pyqtgraph, and pyserial bundling
+- Updated build script for one-command app bundle creation
+- Bumped internal package version to `1.6.0`
 
-* Live RF scanning from tinySA
-
-* WWB-compatible CSV exports
-
-* Real-time matplotlib RF visualization UI
-
-* Automatic tinySA detection
-
-* Manual serial port override support
-
-* Live adjustable refresh rate controls
-
-* Peak hold modes
-
-  * OFF
-  * LATCH
-  * 1 minute
-  * 5 minute
-  * 15 minute
-
-* Top 8 RF hit summary panel
-
-* Bottom status bar with live session information
-
-* Automatic scan saving
-
-* Headless mode support for unattended scanning
-
----
-
-# Requirements
-
-## Hardware
-
-* tinySA or tinySA Ultra
-* USB cable
-* Mac, Linux, or Windows system with Python 3
-
----
-
-# macOS Setup
-
-## 1. Install Python 3
-
-Modern macOS versions usually include Python, but installing the latest version is recommended.
-
-Install from:
-
-[Python Downloads](https://www.python.org/downloads/?utm_source=chatgpt.com)
-
-Verify installation:
+## Install dependencies for source use
 
 ```bash
-python3 --version
+python3 -m pip install -r requirements.txt
 ```
 
----
+## Run from source
 
-## 2. Install Dependencies
-
-Install required Python packages:
-
-```bash
-pip3 install pyserial matplotlib
-```
-
----
-
-# Usage
-
-## Start with UI
+Start the desktop UI:
 
 ```bash
 python3 rf-bridge.py --ui
 ```
 
-You will be prompted for a gig name.
-
-Example:
-
-```text
-Gig name: Blues Fest
-```
-
----
-
-## Headless Mode
-
-Run without the live graph UI:
+Test the packaged-app flow from Terminal:
 
 ```bash
-python3 rf-bridge.py
+python3 rf-bridge.py --app
 ```
 
----
-
-# Automatic tinySA Detection
-
-RF Bridge automatically scans serial devices and selects the first device identified as a tinySA.
-
-Example:
-
-```text
-Auto-detected tinySA:
-  /dev/cu.usbmodem4001
-```
-
-No more:
+Launch without a gig-name prompt:
 
 ```bash
-ls /dev/tty.*
+python3 rf-bridge.py --ui --gig "Blues Fest"
 ```
 
-Like civilized people.
-
----
-
-# Manual Port Override
-
-If automatic detection fails:
+Manual port:
 
 ```bash
-python3 rf-bridge.py --port /dev/cu.usbmodem4001 --ui
+python3 rf-bridge.py --ui --port /dev/cu.usbmodem4001
 ```
 
----
-
-# List Serial Ports
+List ports:
 
 ```bash
 python3 rf-bridge.py --list-ports
 ```
 
-Example:
-
-```text
-Detected serial ports:
-  - /dev/cu.usbmodem4001 — tinySA4 — tinysa.org
-```
-
----
-
-# Live Refresh Controls
-
-The UI now supports adjustable live refresh intervals directly from the application.
-
-Available refresh modes:
-
-* 0.5s
-* 1s
-* 2s
-* 5s
-* 10s
-
-You can also define the initial refresh interval from the command line:
+Set initial refresh interval:
 
 ```bash
 python3 rf-bridge.py --ui --refresh 1
 ```
 
-Changing the refresh rate only affects UI responsiveness and live graph updates.
+Headless CSV capture still works:
 
-CSV export timing remains independent.
-
----
-
-# UI Features
-
-## Wide Layout Interface
-
-RF Bridge v1.2 introduces a cleaner wide-screen UI layout optimized for live operation.
-
-### Includes
-
-* Expanded spectrum display
-* Cleaner right-side control panel
-* Improved Top 8 RF hit readability
-* Persistent bottom status bar
-* Reduced UI clutter
-* Better spacing and visual hierarchy
-
----
-
-# Output Files
-
-Scans are automatically written to:
-
-```text
-wwb_scans/<gig_name>/
+```bash
+python3 rf-bridge.py
 ```
 
-Example:
+## Build the macOS app bundle
 
-```text
-wwb_scans/blues_fest/
+From the project root on macOS:
+
+```bash
+./build_app.sh
 ```
 
-Each scan produces:
+The unsigned app bundle should be created at:
 
-* timestamped historical CSV
-* latest_scan.csv
+```text
+dist/RF Bridge.app
+```
 
----
+First launch on macOS may require:
 
-# WWB Import
+```text
+Right-click RF Bridge.app > Open > Open
+```
 
-Inside Wireless Workbench:
+That is expected for an unsigned local build.
 
-1. Open Frequency Coordination
-2. Import scan data
-3. Select `latest_scan.csv`
+## Recommended clean build workflow
 
----
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+./build_app.sh
+```
 
-# Notes
+## Project layout
 
-* tinySA sweep range must already be configured on the device
-* RF Bridge does not currently configure sweep ranges remotely
-* `/dev/cu.*` devices are preferred automatically on macOS
-* If another serial monitor is open, the port may appear busy
-* Large sweep ranges may reduce UI responsiveness at very fast refresh intervals
+```text
+rf_bridge/config.py    shared defaults
+rf_bridge/utils.py     time, safe names, number parsing
+rf_bridge/tinysa.py    serial discovery and tinySA command helpers
+rf_bridge/export.py    WWB CSV export and latest_scan.csv handling
+rf_bridge/scanner.py   scan validation and headless scan loop
+rf_bridge/worker.py    threaded tinySA scan worker for the UI
+rf_bridge/settings.py  persistent PySide6/QSettings helpers
+rf_bridge/ui.py        PySide6 + pyqtgraph UI
+rf_bridge/app.py       command-line and packaged-app startup
+rf-bridge.py           compatibility launcher
+rf-bridge.spec         PyInstaller app bundle spec
+build_app.sh           macOS app build helper
+```
 
----
+## v1.5.1 stability retained
 
-# Known Issues
+- Background threaded scan worker
+- tinySA connection panel
+- Port refresh, connect, and disconnect controls
+- Device status, version, and sweep range display
+- In-app event log pane
+- Freeze Trace mode
+- Persistent settings using `QSettings`
+- WWB-compatible CSV export
+- `latest_scan.csv` live updating
+- Headless CSV capture mode
+- Qt thread-safety fix from v1.5.1
 
-* macOS may briefly lock the serial port after reconnecting the tinySA
-* Extremely large sweep ranges may reduce UI responsiveness
-* WWB import formatting may vary slightly between WWB versions
-* matplotlib layouts are semi-responsive but not fully adaptive
+## v1.6.2 App Launch Polish
 
----
+When launched as a packaged macOS app, RF Bridge now prompts in this order:
 
-# Planned Features
+```text
+1. Gig/session name
+2. Storage location
+3. Main RF Bridge window
+```
 
-* Native WWB integration
-* Scan averaging
-* Waterfall display
-* Occupancy analysis
-* Native packaged macOS app
-* Multi-device scanning
-* Responsive application framework
-* Native installers
+The gig/session name field starts empty. If left blank, RF Bridge uses `RF Bridge Scan` as the fallback session name.
 
----
+The default storage location is:
 
-# License
+```text
+~/Documents/RF Bridge
+```
 
-MIT License
+Scan files are saved inside the selected storage root using:
 
----
+```text
+wwb_scans/<gig>
+```
 
-Built for live sound engineers, RF coordinators, and anyone tired of everything being a subscription these days.
+For example, accepting the default storage location with a gig named `Blues Fest` saves to:
+
+```text
+~/Documents/RF Bridge/wwb_scans/blues_fest
+```
+
+## Notes
+
+v1.6.2 does not include Apple code signing or notarization. That can come later after the app bundle flow is stable.
+
+
+## v1.6.1 App Launch Fix
+
+If you are building the macOS `.app`, use v1.6.1 or newer. This patch defers tinySA auto-detection until after the main window is visible, which prevents the packaged app from appearing to disappear after the gig/session prompt.
+
+Packaged app scans are saved by default to:
+
+```text
+~/Documents/RF Bridge/wwb_scans/<gig>
+```
+
+The script workflow is unchanged:
+
+```bash
+python3 rf-bridge.py --ui
+```
+
+
+## v1.6.2 App Prompt Update
+
+Use v1.6.2 or newer if you want the packaged app to ask for both gig/session name and scan storage location at launch. The Terminal/script workflow remains unchanged.

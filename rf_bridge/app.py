@@ -1,7 +1,8 @@
-"""Command-line startup for RF Bridge."""
+"""Command-line and packaged-app startup for RF Bridge."""
 
 import argparse
 import os
+import sys
 import time
 
 import serial
@@ -18,6 +19,11 @@ from .ui import run_ui
 from .utils import safe_name
 
 
+def running_as_packaged_app():
+    """Return True when launched from a PyInstaller bundle."""
+    return bool(getattr(sys, "frozen", False))
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="TinySA to WWB RF Bridge"
@@ -27,6 +33,24 @@ def build_parser():
         "--ui",
         action="store_true",
         help="Show real-time RF graph"
+    )
+
+    parser.add_argument(
+        "--app",
+        action="store_true",
+        help="Launch in desktop-app mode without requiring terminal prompts"
+    )
+
+    parser.add_argument(
+        "--gig",
+        default=None,
+        help="Gig/session name. Useful for packaged app launches and automation."
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Override output folder. Defaults to wwb_scans/<gig_slug>."
     )
 
     parser.add_argument(
@@ -64,6 +88,82 @@ def list_ports_and_exit():
         print(f"  - {describe_port(port)}")
 
 
+def prompt_gig_name_gui(default_name="RF Bridge Scan"):
+    """Prompt for a gig name using Qt when the app is launched without a terminal."""
+    from PySide6.QtWidgets import QApplication, QInputDialog
+
+    app = QApplication.instance() or QApplication([])
+    text, ok = QInputDialog.getText(
+        None,
+        "RF Bridge",
+        "Gig/session name:",
+        text="",
+    )
+
+    if not ok:
+        return None
+
+    return text.strip() or default_name
+
+
+def default_app_storage_root():
+    """Return the default scan storage root for packaged app launches."""
+    return os.path.join(
+        os.path.expanduser("~"),
+        "Documents",
+        "RF Bridge",
+    )
+
+
+def prompt_storage_root_gui(default_root=None):
+    """Prompt for the app scan storage root using Qt.
+
+    The selected folder becomes the root that contains the app-managed
+    wwb_scans/<gig> directory structure.
+    """
+    from PySide6.QtWidgets import QApplication, QFileDialog
+
+    app = QApplication.instance() or QApplication([])
+    default_root = default_root or default_app_storage_root()
+    os.makedirs(default_root, exist_ok=True)
+
+    selected = QFileDialog.getExistingDirectory(
+        None,
+        "Choose RF Bridge Storage Location",
+        default_root,
+    )
+
+    return selected or default_root
+
+
+def resolve_gig_name(args, use_app_mode):
+    if args.gig:
+        return args.gig
+
+    if use_app_mode:
+        return prompt_gig_name_gui()
+
+    return input("Gig name: ")
+
+
+def resolve_output_dir(args, gig_slug, use_app_mode=False):
+    if args.output_dir:
+        return args.output_dir
+
+    if use_app_mode:
+        storage_root = prompt_storage_root_gui(default_app_storage_root())
+        return os.path.join(
+            storage_root,
+            "wwb_scans",
+            gig_slug,
+        )
+
+    return os.path.join(
+        "wwb_scans",
+        gig_slug
+    )
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -72,18 +172,38 @@ def main(argv=None):
         list_ports_and_exit()
         return
 
-    gig_name = input("Gig name: ")
-    gig_slug = safe_name(gig_name)
+    use_app_mode = args.app or running_as_packaged_app()
 
-    output_dir = os.path.join(
-        "wwb_scans",
-        gig_slug
-    )
+    # A double-clicked macOS bundle has no useful terminal, so it should launch
+    # the desktop UI by default. The CLI still keeps the old explicit --ui flow.
+    if use_app_mode:
+        args.ui = True
+
+    gig_name = resolve_gig_name(args, use_app_mode)
+    if gig_name is None:
+        return
+
+    gig_slug = safe_name(gig_name)
+    output_dir = resolve_output_dir(args, gig_slug, use_app_mode)
 
     os.makedirs(
         output_dir,
         exist_ok=True
     )
+
+    if args.ui:
+        print(f"Output folder: {output_dir}")
+        print(f"Scan interval: {SCAN_INTERVAL_SECONDS} seconds")
+        print(f"UI refresh: {args.refresh} seconds")
+        print("UI enabled: True")
+
+        run_ui(
+            output_dir=output_dir,
+            gig_slug=gig_slug,
+            ui_update_seconds=args.refresh,
+            selected_port=args.port,
+        )
+        return
 
     if args.port:
         selected_port = args.port
@@ -116,53 +236,18 @@ def main(argv=None):
 
         freqs_mhz = read_frequencies_mhz(ser)
 
-        print(
-            f"Serial port: "
-            f"{selected_port}"
-        )
+        print(f"Serial port: {selected_port}")
+        print(f"Output folder: {output_dir}")
+        print(f"Scan interval: {SCAN_INTERVAL_SECONDS} seconds")
+        print(f"Frequency range: {min(freqs_mhz):.3f} MHz - {max(freqs_mhz):.3f} MHz")
+        print("UI enabled: False")
 
-        print(
-            f"Output folder: "
-            f"{output_dir}"
+        run_headless(
+            ser,
+            output_dir,
+            gig_slug,
+            freqs_mhz
         )
-
-        print(
-            f"Scan interval: "
-            f"{SCAN_INTERVAL_SECONDS} seconds"
-        )
-
-        print(
-            f"UI refresh: "
-            f"{args.refresh} seconds"
-        )
-
-        print(
-            f"Frequency range: "
-            f"{min(freqs_mhz):.3f} MHz - "
-            f"{max(freqs_mhz):.3f} MHz"
-        )
-
-        print(
-            f"UI enabled: "
-            f"{args.ui}"
-        )
-
-        if args.ui:
-            run_ui(
-                ser,
-                output_dir,
-                gig_slug,
-                freqs_mhz,
-                args.refresh,
-                selected_port
-            )
-        else:
-            run_headless(
-                ser,
-                output_dir,
-                gig_slug,
-                freqs_mhz
-            )
 
 
 if __name__ == "__main__":

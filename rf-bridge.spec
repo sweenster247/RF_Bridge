@@ -1,13 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
+
+hiddenimports = []
+hiddenimports += collect_submodules('PySide6')
+hiddenimports += collect_submodules('pyqtgraph')
+hiddenimports += [
+    'serial',
+    'serial.tools',
+    'serial.tools.list_ports',
+]
 
 a = Analysis(
     ['rf-bridge.py'],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['PySide6', 'pyqtgraph', 'serial'],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -51,4 +62,11 @@ app = BUNDLE(
     name='RF Bridge.app',
     icon=None,
     bundle_identifier='org.rfbridge.app',
+    info_plist={
+        'CFBundleDisplayName': 'RF Bridge',
+        'CFBundleName': 'RF Bridge',
+        'CFBundleShortVersionString': '1.6.2',
+        'CFBundleVersion': '1.6.2',
+        'NSHighResolutionCapable': True,
+    },
 )
