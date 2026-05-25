@@ -1,60 +1,76 @@
 # RF Bridge
 
-RF Bridge is a lightweight Python utility that connects a tinySA spectrum analyzer to Shure Wireless Workbench (WWB) by exporting live RF scans as WWB-compatible CSV files.
+TinySA live RF analyzer and WWB CSV exporter for live sound engineers.
 
-Designed for live sound engineers, RF coordinators, churches, theaters, and festival workflows that want fast RF visibility without expensive proprietary hardware.
+Built for fast RF coordination workflows using a TinySA and a MacBook.
 
 ---
 
 ## Features
 
-* Live RF scanning from tinySA
-* WWB-compatible CSV exports
-* Real-time matplotlib RF visualization UI
+* Real-time RF spectrum visualization
 * Peak hold modes
 
-  * OFF
-  * LATCH
+  * Latch
   * 1 minute
   * 5 minute
   * 15 minute
-* Top 8 RF hit summary panel
-* Automatic scan saving
-* Automatic tinySA serial port detection
-* Manual serial port override support
-* Headless mode support for unattended scanning
+* Top 8 strongest RF hits
+* Median RF noise floor monitoring
+* Frequency cursor readout
+* WWB-compatible CSV exports
+* Automatic timestamped scan logging
+* Dark mode friendly UI
+* Lightweight and portable
 
 ---
 
-# Requirements
+# Hardware Requirements
 
-## Hardware
-
-* tinySA or tinySA Ultra
+* TinySA or TinySA Ultra
 * USB cable
-* Mac, Linux, or Windows system with Python 3
+* MacBook running macOS
 
 ---
 
-# macOS Setup
+# Software Requirements
 
-## 1. Install Python 3
+## 1. Install Xcode Command Line Tools
 
-Modern macOS versions usually include Python, but installing the latest version is recommended.
+Open Terminal and run:
 
-Install from:
+```bash
+xcode-select --install
+```
 
-https://www.python.org/downloads/
+This installs:
 
-Verify installation:
+* Python support
+* Build tools
+* USB serial support
+* pip
+
+You may need to reboot or reopen Terminal afterward.
+
+---
+
+## 2. Verify Python Installation
+
+Run:
 
 ```bash
 python3 --version
 ```
 
+You should see something similar to:
+
+```text
+Python 3.x.x
+```
+
 ---
 
-## 2. Install Dependencies
+## 3. Install Dependencies
 
 Install required Python packages:
 
@@ -62,138 +78,190 @@ Install required Python packages:
 pip3 install pyserial matplotlib
 ```
 
----
+Dependencies used:
 
-# Usage
-
-## Start with UI
-
-```bash
-python3 rf-bridge.py --ui
-```
-
-You will be prompted for a gig name.
-
-Example:
-
-```text
-Gig name: Blues Fest
-```
+* pyserial
+* matplotlib
 
 ---
 
-## Headless Mode
+# TinySA Setup
 
-Run without the live graph UI:
+Connect the TinySA via USB.
 
-```bash
-python3 rf-bridge.py
-```
-
----
-
-# Automatic tinySA Detection
-
-RF Bridge automatically scans serial devices and selects the first device identified as a tinySA.
-
-Example:
-
-```text
-Auto-detected tinySA:
-  /dev/cu.usbmodem4001
-```
-
-No more:
+Find the TinySA serial device:
 
 ```bash
 ls /dev/tty.*
 ```
 
-Like civilized people.
+You should see something similar to:
+
+```text
+/dev/tty.usbmodem4001
+```
+
+Update the script if your port differs:
+
+```python
+PORT = "/dev/tty.usbmodem4001"
+```
 
 ---
 
-# Manual Port Override
+# Suggested Sweep Ranges
 
-If automatic detection fails:
+Example wireless audio coordination sweep:
+
+```text
+400 MHz - 600 MHz
+```
+
+Suggested workflow:
+
+* Configure sweep range directly on TinySA
+* Launch RF Bridge afterward
+* RF Bridge automatically adapts to TinySA sweep settings
+
+---
+
+# Running RF Bridge
+
+## Launch UI Mode
 
 ```bash
-python3 rf-bridge.py --port /dev/cu.usbmodem4001 --ui
+python3 rf_bridge.py --ui
 ```
 
 ---
 
-# List Serial Ports
+## Launch Headless CSV Export Mode
 
 ```bash
-python3 rf-bridge.py --list-ports
-```
-
-Example:
-
-```text
-Detected serial ports:
-  - /dev/cu.usbmodem4001 — tinySA4 — tinysa.org
+python3 rf_bridge.py
 ```
 
 ---
 
-# Output Files
+# CSV Export Behavior
 
-Scans are automatically written to:
+Scans are automatically saved every 5 minutes.
+
+Exports include:
+
+* Timestamped CSV files
+* latest_scan.csv shortcut
+
+Example output:
 
 ```text
-wwb_scans/<gig_name>/
+wwb_scans/
+└── festival_show/
+    ├── latest_scan.csv
+    ├── festival_show_tinysa_scan_2026-05-24_22-15-00.csv
+    └── festival_show_tinysa_scan_2026-05-24_22-20-00.csv
 ```
 
-Example:
-
-```text
-wwb_scans/blues_fest/
-```
-
-Each scan produces:
-
-* timestamped historical CSV
-* latest_scan.csv
+These CSVs can be imported into Wireless Workbench.
 
 ---
 
-# WWB Import
+# UI Features
 
-Inside Wireless Workbench:
+## Cursor Readout
 
-1. Open Frequency Coordination
-2. Import scan data
-3. Select `latest_scan.csv`
+Hover over the RF graph to display:
+
+* Frequency
+* Live RF level
+* Peak RF level
+
+---
+
+## Peak Hold Modes
+
+Click the Peak button to cycle through:
+
+* OFF
+* LATCH
+* 1 min
+* 5 min
+* 15 min
+
+Reset Peaks clears all stored peak data.
+
+---
+
+## RF Summary Panel
+
+Displays:
+
+* Median noise floor
+* Top 8 RF hits
+* Live strongest frequencies
 
 ---
 
 # Notes
 
-* tinySA sweep range must already be configured on the device
-* RF Bridge does not currently configure sweep ranges remotely
-* `/dev/cu.*` devices are preferred automatically on macOS
-* If another serial monitor is open, the port may appear busy
+* RF Bridge uses the TinySA as the source of truth
+* Frequency ranges automatically follow TinySA sweep settings
+* Restart RF Bridge after changing TinySA sweep ranges
+* Designed for lightweight field use
+* Tested on macOS
 
 ---
 
-# Known Issues
+# Recommended Future Features
 
-* macOS may briefly lock the serial port after reconnecting the tinySA
-* Extremely large sweep ranges may reduce UI responsiveness
-* WWB import formatting may vary slightly between WWB versions
+Potential future additions:
+
+* Wireless mic frequency overlays
+* WWB integration
+* Occupied frequency detection
+* TV channel shading
+* Scan screenshots/export
+* Multi-receiver support
 
 ---
 
-# Planned Features
+# Troubleshooting
 
-* Native WWB integration
-* Scan averaging
-* Waterfall display
-* Occupancy analysis
-* Native packaged macOS app
-* Multi-device scanning
+## “pip3: command not found”
+
+Install Xcode Command Line Tools:
+
+```bash
+xcode-select --install
+```
+
+---
+
+## No TinySA Found
+
+Verify device path:
+
+```bash
+ls /dev/tty.*
+```
+
+Update:
+
+```python
+PORT = "/dev/tty.usbmodemXXXX"
+```
+
+---
+
+## Frequency/Data Mismatch Warning
+
+Usually caused by:
+
+* Changing TinySA sweep settings while RF Bridge is running
+* USB disconnects
+* TinySA not actively scanning
+
+Restart RF Bridge after sweep changes.
 
 ---
 
@@ -201,6 +269,12 @@ Inside Wireless Workbench:
 
 MIT License
 
+Use freely, modify freely, share freely.
+
 ---
 
-Built for live sound engineers, RF coordinators, and anyone tired of everything being a subscription these days.
+# Credits
+
+Created by Cody Sweeny
+
+Built for live sound engineers, RF coordinators, and anyone tired of every useful tool becoming a subscription.
