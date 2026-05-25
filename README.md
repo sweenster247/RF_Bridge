@@ -277,4 +277,4 @@ Use freely, modify freely, share freely.
 
 Created by Cody Sweeny
 
-Built for live sound engineers, RF coordinators, and anyone tired of guessing what the RF environment is doing.
+Built for live sound engineers, RF coordinators, and anyone tired of every useful tool becoming a subscription.
