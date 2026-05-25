@@ -1,3 +1,4 @@
 pyserial
 PySide6
 pyqtgraph
+pyinstaller
