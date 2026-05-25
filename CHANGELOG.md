@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3
+- Refactored RF Bridge into modular app-ready architecture
+- Split tinySA serial handling into dedicated module
+- Split WWB CSV export logic into dedicated module
+- Split scan loop/state handling into dedicated module
+- Split UI into dedicated module
+- Added centralized app entrypoint structure
+- Preserved existing CLI behavior and arguments
+- Prepared project structure for future packaged app builds
+- Improved long-term maintainability and IDE workflow
+
 ## v1.2
 - Redesigned wide UI
 - Added live refresh controls

@@ -1,0 +1,5 @@
+"""Shared RF Bridge defaults."""
+
+BAUD = 115200
+SCAN_INTERVAL_SECONDS = 300
+UI_UPDATE_SECONDS = 2

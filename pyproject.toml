@@ -1,0 +1,12 @@
+[project]
+name = "rf-bridge"
+version = "1.3.0"
+description = "tinySA to Wireless Workbench RF scan bridge"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib",
+    "pyserial",
+]
+
+[project.scripts]
+rf-bridge = "rf_bridge.app:main"
