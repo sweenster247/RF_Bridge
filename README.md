@@ -1,4 +1,13 @@
-# RF Bridge v1.7
+<p align="center">
+  <img src="assets/%20Logo.png" width="180" alt="RF Bridge Icon">
+</p>
+
+<h1 align="center">RF Bridge</h1>
+
+<p align="center">
+  tinySA → WWB bridge and live RF visualization utility for macOS
+</p>
+
 
 RF Bridge connects a tinySA to a Wireless Workbench-friendly CSV workflow with a live desktop RF display.
 
