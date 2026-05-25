@@ -6,7 +6,7 @@ set -euo pipefail
 
 APP="dist/RF Bridge.app"
 DMG_DIR="dist/dmg"
-DMG_NAME="RF-Bridge-v1.7-macOS.dmg"
+DMG_NAME="RF-Bridge-v1.8-macOS.dmg"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This DMG script must be run on macOS." >&2
@@ -28,7 +28,7 @@ mkdir -p "$DMG_DIR"
 cp -R "$APP" "$DMG_DIR/"
 
 create-dmg \
-  --volname "RF Bridge v1.7" \
+  --volname "RF Bridge v1.8" \
   --window-pos 200 120 \
   --window-size 620 420 \
   --icon-size 110 \

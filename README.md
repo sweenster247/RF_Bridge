@@ -1,17 +1,8 @@
-<p align="center">
-  <img src="assets/%20Logo.png" width="180" alt="RF Bridge Icon">
-</p>
-
-<h1 align="center">RF Bridge</h1>
-
-<p align="center">
-  tinySA → WWB bridge and live RF visualization utility for macOS
-</p>
-
+# RF Bridge v1.8
 
 RF Bridge connects a tinySA to a Wireless Workbench-friendly CSV workflow with a live desktop RF display.
 
-v1.7 focuses on polish and distribution: app preferences, light/dark appearance support, a proper app icon asset, and DMG build prep.
+v1.8 adds saved capture loading so previous RF Bridge CSV scans can be opened and inspected without needing a tinySA connected.
 
 ## Highlights
 
@@ -28,6 +19,8 @@ v1.7 focuses on polish and distribution: app preferences, light/dark appearance 
 - App icon source assets and macOS `.icns` generation script
 - PyInstaller `.app` build script
 - DMG build script using `create-dmg`
+- Open saved RF Bridge CSV captures from the File menu
+- Loaded Capture mode with Return to Live workflow
 
 ## Install dependencies for source use
 
@@ -78,6 +71,28 @@ Headless CSV capture still works:
 ```bash
 python3 rf-bridge.py
 ```
+
+## Loading saved captures
+
+Open a previous RF Bridge CSV scan from:
+
+```text
+File > Open Capture…
+```
+
+Supported files use the same two-column RF Bridge / WWB-friendly format:
+
+```text
+frequency_mhz, dbm
+```
+
+When a capture is loaded, the graph enters **Loaded Capture** mode. Live scanning can continue in the background if a tinySA is connected, and new scans will still save to disk. Use:
+
+```text
+File > Return to Live
+```
+
+or the **Return to Live** button to resume the live trace.
 
 ## Preferences
 
@@ -165,12 +180,12 @@ Build the app, then build the DMG:
 The DMG should be created at:
 
 ```text
-dist/RF-Bridge-v1.7-macOS.dmg
+dist/RF-Bridge-v1.8-macOS.dmg
 ```
 
 ## App icon
 
-v1.7 includes:
+v1.8 includes:
 
 ```text
 assets/rf-bridge-icon-1024.png
@@ -218,4 +233,4 @@ assets/                   app icon source assets
 
 ## Notes
 
-v1.7 does not include Apple code signing or notarization. That can come later after the app bundle and DMG flow are stable.
+v1.8 does not include Apple code signing or notarization. That can come later after the app bundle and DMG flow are stable.

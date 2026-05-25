@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.8
+- Added File > Open Capture… for saved RF Bridge CSV scans
+- Added Loaded Capture mode for offline scan review
+- Added Return to Live menu action and side-panel button
+- Preserved live scan saving while a loaded capture is displayed
+- Added capture-loading helper module for future overlay support
+- Updated docs and release notes for capture loading workflow
+
 ## v1.7
 - Added Preferences window under `RF Bridge > Preferences…`
 - Added appearance setting with System, Dark, and Light options

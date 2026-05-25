@@ -1,9 +1,10 @@
-"""PySide6 / pyqtgraph RF Bridge v1.7 UI."""
+"""PySide6 / pyqtgraph RF Bridge v1.8 UI."""
 
 import bisect
 import os
 import time
 
+from .capture import load_capture_csv
 from .config import SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS
 from .export import save_wwb_csv
 from .settings import AppSettings
@@ -142,6 +143,9 @@ class RFBridgeWindow:
         self.peak_history = []
         self.top_markers = []
         self.frozen = False
+        self.loaded_capture = None
+        self.capture_mode = False
+        self.live_freqs_mhz = []
         self.connected = False
         self.worker_thread = None
         self.worker = None
@@ -258,7 +262,9 @@ class RFBridgeWindow:
         self.reset_button = QPushButton("Reset Peaks")
         self.refresh_button = QPushButton(f"Refresh: {format_seconds(self.refresh_seconds)}s")
         self.freeze_button = QPushButton("Freeze: OFF")
-        for button in (self.peak_button, self.reset_button, self.refresh_button, self.freeze_button):
+        self.return_live_button = QPushButton("Return to Live")
+        self.return_live_button.setEnabled(False)
+        for button in (self.peak_button, self.reset_button, self.refresh_button, self.freeze_button, self.return_live_button):
             button.setMinimumHeight(42)
 
         side_layout.addWidget(self.summary_label, stretch=1)
@@ -267,6 +273,7 @@ class RFBridgeWindow:
         side_layout.addWidget(self.reset_button)
         side_layout.addWidget(self.refresh_button)
         side_layout.addWidget(self.freeze_button)
+        side_layout.addWidget(self.return_live_button)
 
         content_layout.addWidget(self.plot, stretch=1)
         content_layout.addWidget(side_panel)
@@ -296,13 +303,14 @@ class RFBridgeWindow:
         self.reset_button.clicked.connect(self.reset_peaks)
         self.refresh_button.clicked.connect(self.toggle_refresh)
         self.freeze_button.clicked.connect(self.toggle_freeze)
+        self.return_live_button.clicked.connect(self.return_to_live)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_move)
         self.window.destroyed.connect(self.shutdown)
 
         self.populate_ports()
         self.update_connection_state(False)
         self.update_status()
-        self.log("RF Bridge v1.7 ready")
+        self.log("RF Bridge v1.8 ready")
 
         # Defer connection until after the window is shown and the Qt event loop
         # is running. In a packaged macOS app, doing serial auto-detection during
@@ -345,6 +353,16 @@ class RFBridgeWindow:
         """
 
     def create_menus(self):
+        file_menu = self.window.menuBar().addMenu("File")
+
+        open_capture_action = self.QAction("Open Capture…", self.window)
+        open_capture_action.triggered.connect(self.open_capture)
+        file_menu.addAction(open_capture_action)
+
+        return_live_action = self.QAction("Return to Live", self.window)
+        return_live_action.triggered.connect(self.return_to_live)
+        file_menu.addAction(return_live_action)
+
         app_menu = self.window.menuBar().addMenu("RF Bridge")
         preferences_action = self.QAction("Preferences…", self.window)
         preferences_action.triggered.connect(self.open_preferences)
@@ -362,6 +380,67 @@ class RFBridgeWindow:
         self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
         self.update_connection_state(self.connected, self.connection_status.text())
+
+    def open_capture(self):
+        from PySide6.QtWidgets import QFileDialog
+
+        start_dir = self.output_dir if os.path.isdir(self.output_dir) else self.settings.get_storage_root()
+        path, _ = QFileDialog.getOpenFileName(
+            self.window,
+            "Open RF Bridge Capture",
+            start_dir,
+            "CSV captures (*.csv);;All files (*)",
+        )
+
+        if not path:
+            return
+
+        try:
+            capture = load_capture_csv(path)
+        except Exception as exc:
+            self.show_error(f"Could not load capture:\n{exc}")
+            self.log(f"Capture load failed: {exc}")
+            return
+
+        self.loaded_capture = capture
+        self.capture_mode = True
+        self.frozen = False
+        self.freeze_button.setText("Freeze: OFF")
+        self.return_live_button.setEnabled(bool(self.latest_dbm and self.live_freqs_mhz))
+        self.freqs_mhz = capture["freqs_mhz"]
+        self.display_dbm = capture["dbm"]
+        self.last_cursor_index = None
+        self.peak_curve.setData([], [])
+        self.peak_hold = None
+        self.peak_history = []
+
+        self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
+        self.cursor_line.setPos(self.freqs_mhz[0])
+        self.live_curve.setData(self.freqs_mhz, self.display_dbm)
+        self.update_top_frequencies(self.display_dbm)
+        self.plot.setTitle(
+            f"RF Bridge - {self.gig_slug} - Loaded Capture: {capture['name']}",
+            color=self.theme["text"],
+            size="16pt",
+        )
+        self.log(f"Loaded capture: {capture['name']}")
+        self.update_status()
+
+    def return_to_live(self):
+        if not self.latest_dbm or not self.live_freqs_mhz:
+            self.log("No live trace is available yet")
+            return
+
+        self.capture_mode = False
+        self.loaded_capture = None
+        self.freqs_mhz = self.live_freqs_mhz.copy()
+        self.last_cursor_index = None
+        self.return_live_button.setEnabled(False)
+        self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
+        self.cursor_line.setPos(self.freqs_mhz[0])
+        self.render_scan(self.latest_dbm)
+        self.log("Returned to live trace")
+        self.update_status()
 
     def open_preferences(self):
         from PySide6.QtWidgets import (
@@ -519,6 +598,7 @@ class RFBridgeWindow:
         self.connected = True
         self.selected_port = port
         self.freqs_mhz = freqs_mhz
+        self.live_freqs_mhz = freqs_mhz.copy()
         self.latest_dbm = []
         self.display_dbm = []
         self.reset_peaks()
@@ -622,18 +702,23 @@ class RFBridgeWindow:
         self.update_hover_label(None)
 
     def on_scan_ready(self, dbm):
-        if not self.freqs_mhz:
+        live_freqs = self.live_freqs_mhz or self.freqs_mhz
+        if not live_freqs:
             return
-        if len(dbm) != len(self.freqs_mhz):
-            self.log(f"Warning: frequency/data mismatch: {len(self.freqs_mhz)} freqs, {len(dbm)} levels")
+        if len(dbm) != len(live_freqs):
+            self.log(f"Warning: frequency/data mismatch: {len(live_freqs)} freqs, {len(dbm)} levels")
             return
         self.latest_dbm = dbm
-        self.last_cursor_index = None
-        if not self.frozen:
-            self.render_scan(dbm)
+        if self.capture_mode:
+            self.return_live_button.setEnabled(True)
+        else:
+            self.freqs_mhz = live_freqs
+            self.last_cursor_index = None
+            if not self.frozen:
+                self.render_scan(dbm)
         now = time.time()
         if now - self.last_save_time >= SCAN_INTERVAL_SECONDS:
-            filename, latest_filename = save_wwb_csv(self.output_dir, self.gig_slug, self.freqs_mhz, dbm)
+            filename, latest_filename = save_wwb_csv(self.output_dir, self.gig_slug, live_freqs, dbm)
             self.last_save_time = now
             self.log(f"Saved scan: {os.path.basename(filename)}")
         self.update_status(now)
@@ -687,12 +772,15 @@ class RFBridgeWindow:
             return
         nearest_freq = self.freqs_mhz[idx]
         nearest_level = source[idx]
-        frozen_text = "\nFrozen Trace" if self.frozen else ""
+        if self.capture_mode and self.loaded_capture:
+            mode_text = f"\nLoaded Capture: {self.loaded_capture['name']}"
+        else:
+            mode_text = "\nFrozen Trace" if self.frozen else ""
         if self.peak_hold:
             nearest_peak = self.peak_hold[idx]
-            self.hover_label.setText(f"{nearest_freq:.6f} MHz\nLive: {nearest_level:.2f} dBm\nPeak: {nearest_peak:.2f} dBm{frozen_text}")
+            self.hover_label.setText(f"{nearest_freq:.6f} MHz\nLive: {nearest_level:.2f} dBm\nPeak: {nearest_peak:.2f} dBm{mode_text}")
         else:
-            self.hover_label.setText(f"{nearest_freq:.6f} MHz\nLive: {nearest_level:.2f} dBm{frozen_text}")
+            self.hover_label.setText(f"{nearest_freq:.6f} MHz\nLive: {nearest_level:.2f} dBm{mode_text}")
 
     def on_mouse_move(self, scene_pos):
         if not self.freqs_mhz or not (self.display_dbm or self.latest_dbm):
@@ -722,7 +810,10 @@ class RFBridgeWindow:
             next_save = 0
         minutes = next_save // 60
         seconds = next_save % 60
-        freeze_label = "Frozen" if self.frozen else "Live"
+        if self.capture_mode and self.loaded_capture:
+            freeze_label = f"Loaded Capture: {self.loaded_capture['name']}"
+        else:
+            freeze_label = "Frozen" if self.frozen else "Live"
         self.status_label.setText(
             f"Scan Folder: {self.output_dir}   |   Latest: latest_scan.csv   |   "
             f"Next Save: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
