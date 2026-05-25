@@ -234,12 +234,25 @@ def run_headless(ser, output_dir, gig_slug, freqs_mhz):
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 
-def run_ui(ser, output_dir, gig_slug, freqs_mhz):
+def run_ui(ser, output_dir, gig_slug, freqs_mhz, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None):
 
     import matplotlib.pyplot as plt
     from matplotlib.widgets import Button
 
     plt.style.use("dark_background")
+
+    refresh_modes = [
+        0.5,
+        1,
+        2,
+        5,
+        10,
+    ]
+
+    refresh_index = min(
+        range(len(refresh_modes)),
+        key=lambda index: abs(refresh_modes[index] - ui_update_seconds)
+    )
 
     state = {
         "peak_enabled": False,
@@ -248,6 +261,10 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
         "last_cursor_index": None,
         "last_save_time": 0,
         "peak_mode_index": 0,
+        "refresh_index": refresh_index,
+        "refresh_seconds": ui_update_seconds,
+
+        "refresh_modes": refresh_modes,
 
         "peak_modes": [
             ("OFF", None),
@@ -260,20 +277,36 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
         "peak_history": [],
     }
 
-    fig = plt.figure(figsize=(20, 10))
+    fig = plt.figure(figsize=(20, 10), constrained_layout=False)
     fig.patch.set_facecolor("#111111")
 
-    ax = fig.add_axes([0.045, 0.13, 0.74, 0.78])
+    # Fixed normalized layout: wide plot, right summary/control rail, bottom status bar.
+    # This scales with the window, but it is intentionally not a fully responsive GUI layout.
+    ax = fig.add_axes([0.060, 0.245, 0.715, 0.640])
     ax.set_facecolor("#181818")
 
-    side_ax = fig.add_axes([0.84, 0.24, 0.14, 0.69])
-
-    side_ax.set_facecolor("#181818")
+    side_ax = fig.add_axes([0.815, 0.470, 0.160, 0.395])
+    side_ax.set_facecolor("#111111")
     side_ax.axis("off")
 
-    button_ax = fig.add_axes([0.84, 0.15, 0.14, 0.05])
+    # Thin visual divider between the plot and the right panel.
+    divider_ax = fig.add_axes([0.795, 0.185, 0.0015, 0.700])
+    divider_ax.set_facecolor("#777777")
+    divider_ax.set_xticks([])
+    divider_ax.set_yticks([])
 
-    reset_ax = fig.add_axes([0.84, 0.08, 0.14, 0.05])
+    # Control buttons sit higher and line up under the RF summary.
+    button_ax = fig.add_axes([0.815, 0.330, 0.160, 0.055])
+    reset_ax = fig.add_axes([0.815, 0.255, 0.160, 0.055])
+    refresh_ax = fig.add_axes([0.815, 0.180, 0.160, 0.055])
+
+    # Bottom status strip spans the bottom like an application status bar.
+    status_ax = fig.add_axes([0.030, 0.070, 0.945, 0.070])
+    status_ax.set_facecolor("#181818")
+    status_ax.set_xticks([])
+    status_ax.set_yticks([])
+    for spine in status_ax.spines.values():
+        spine.set_color("#555555")
 
     try:
         fig.canvas.manager.set_window_title("RF Bridge")
@@ -401,6 +434,54 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
         hovercolor="#333333",
     )
 
+    refresh_button = Button(
+        refresh_ax,
+        f"Refresh: {state['refresh_seconds']:g}s",
+        color="#222222",
+        hovercolor="#333333",
+    )
+
+    for button in (peak_button, reset_button, refresh_button):
+        button.label.set_fontsize(11)
+        button.label.set_color("#eeeeee")
+
+    status_text = status_ax.text(
+        0.035,
+        0.5,
+        "",
+        va="center",
+        ha="left",
+        fontsize=11,
+        family="monospace",
+        color="#eeeeee",
+    )
+
+    def update_status(now=None):
+
+        if now is None:
+            now = time.time()
+
+        if state["last_save_time"]:
+            next_save = max(
+                0,
+                SCAN_INTERVAL_SECONDS - int(now - state["last_save_time"])
+            )
+        else:
+            next_save = 0
+
+        minutes = next_save // 60
+        seconds = next_save % 60
+
+        port_label = selected_port or "auto"
+
+        status_text.set_text(
+            f"Scan Folder: {output_dir}   |   "
+            f"Latest: latest_scan.csv   |   "
+            f"Next Save: {minutes}:{seconds:02d}   |   "
+            f"Refresh: {format_seconds(state['refresh_seconds'])}s   |   "
+            f"tinySA: {port_label}"
+        )
+
     def nearest_index(freq):
 
         idx = bisect.bisect_left(
@@ -439,13 +520,13 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
         )[:8]
 
         text = "RF SUMMARY\n"
-        text += "══════════════\n\n"
+        text += "──────────────────────\n\n"
 
         text += "Median Floor\n"
         text += f"{median_floor:7.2f} dBm\n\n"
 
         text += "TOP 8 RF HITS\n"
-        text += "──────────────\n\n"
+        text += "──────────────────────\n"
 
         for i, (freq, level) in enumerate(
             strongest,
@@ -453,13 +534,12 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
         ):
 
             text += (
-                f"{i}. {freq:9.3f} MHz\n"
-                f"   {level:7.2f} dBm\n\n"
+                f"{i}. {freq:9.3f} MHz  {level:7.2f} dBm\n"
             )
 
         side_ax.clear()
 
-        side_ax.set_facecolor("#181818")
+        side_ax.set_facecolor("#111111")
         side_ax.axis("off")
 
         side_ax.text(
@@ -468,7 +548,7 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
             text,
             va="top",
             ha="left",
-            fontsize=14,
+            fontsize=12,
             family="monospace",
             color="#eeeeee",
         )
@@ -549,6 +629,58 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
 
         fig.canvas.draw_idle()
 
+    timer_state = {
+        "timer": None,
+    }
+
+    def format_seconds(seconds):
+
+        if float(seconds).is_integer():
+            return str(int(seconds))
+
+        return str(seconds)
+
+    def start_scan_timer(seconds):
+
+        if timer_state["timer"] is not None:
+            timer_state["timer"].stop()
+
+        timer = fig.canvas.new_timer(
+            interval=int(seconds * 1000)
+        )
+
+        timer.add_callback(update_scan)
+
+        timer.start()
+
+        timer_state["timer"] = timer
+
+    def set_refresh_interval(seconds):
+
+        state["refresh_seconds"] = seconds
+
+        refresh_button.label.set_text(
+            f"Refresh: {format_seconds(seconds)}s"
+        )
+
+        start_scan_timer(seconds)
+
+        print(f"UI refresh changed to {seconds} seconds")
+
+        update_status()
+
+        fig.canvas.draw_idle()
+
+    def toggle_refresh(event):
+
+        state["refresh_index"] = (
+            state["refresh_index"] + 1
+        ) % len(state["refresh_modes"])
+
+        set_refresh_interval(
+            state["refresh_modes"][state["refresh_index"]]
+        )
+
     def reset_peaks(event):
 
         state["peak_enabled"] = False
@@ -570,6 +702,8 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
     peak_button.on_clicked(toggle_peak)
 
     reset_button.on_clicked(reset_peaks)
+
+    refresh_button.on_clicked(toggle_refresh)
 
     def on_mouse_move(event):
 
@@ -760,17 +894,13 @@ def run_ui(ser, output_dir, gig_slug, freqs_mhz):
 
             state["last_save_time"] = now
 
+        update_status(now)
+
         fig.canvas.draw_idle()
 
         return True
 
-    timer = fig.canvas.new_timer(
-        interval=UI_UPDATE_SECONDS * 1000
-    )
-
-    timer.add_callback(update_scan)
-
-    timer.start()
+    start_scan_timer(state["refresh_seconds"])
 
     update_scan()
 
@@ -799,6 +929,13 @@ def main():
         "--list-ports",
         action="store_true",
         help="List detected serial ports and exit"
+    )
+
+    parser.add_argument(
+        "--refresh",
+        type=float,
+        default=UI_UPDATE_SECONDS,
+        help="Initial UI refresh interval in seconds. Can also be changed from the UI."
     )
 
     args = parser.parse_args()
@@ -892,7 +1029,7 @@ def main():
 
         print(
             f"UI refresh: "
-            f"{UI_UPDATE_SECONDS} seconds"
+            f"{args.refresh} seconds"
         )
 
         print(
@@ -912,7 +1049,9 @@ def main():
                 ser,
                 output_dir,
                 gig_slug,
-                freqs_mhz
+                freqs_mhz,
+                args.refresh,
+                selected_port
             )
 
         else:
