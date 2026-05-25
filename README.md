@@ -109,9 +109,9 @@ PORT = "/dev/tty.usbmodem4001"
 
 ---
 
-# TinySA Recommended Settings
+# Suggested Sweep Ranges
 
-Recommended sweep range:
+Example wireless audio coordination sweep:
 
 ```text
 400 MHz - 600 MHz
