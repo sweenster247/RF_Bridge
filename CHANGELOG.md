@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.9.1
+- Improved Mic Plot label placement so marker names remain visible inside the graph
+- Added MHz suffix to Mic Plot labels
+- Added subtle label background/border for better readability
+
+## v1.9
+- Added Tools > Mic Plot… for manually plotting wireless/mic frequencies
+- Added persistent named frequency markers
+- Added marker visibility toggles
+- Added preset marker colors
+- Added vertical labeled marker lines on the RF graph
+- Markers display across Live, Frozen, and Loaded Capture modes
+- Added mic plot helper module for future marker import/export and overlay workflows
+
 ## v1.8
 - Added File > Open Capture… for saved RF Bridge CSV scans
 - Added Loaded Capture mode for offline scan review

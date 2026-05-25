@@ -5,6 +5,7 @@ import os
 import time
 
 from .capture import load_capture_csv
+from .micplot import MARKER_COLORS, DEFAULT_MARKER_COLOR, load_markers, save_markers
 from .config import SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS
 from .export import save_wwb_csv
 from .settings import AppSettings
@@ -142,6 +143,8 @@ class RFBridgeWindow:
         self.peak_hold = None
         self.peak_history = []
         self.top_markers = []
+        self.mic_markers = []
+        self.mic_marker_items = []
         self.frozen = False
         self.loaded_capture = None
         self.capture_mode = False
@@ -310,7 +313,9 @@ class RFBridgeWindow:
         self.populate_ports()
         self.update_connection_state(False)
         self.update_status()
-        self.log("RF Bridge v1.8 ready")
+        self.mic_markers = load_markers(self.settings)
+        self.render_mic_markers()
+        self.log("RF Bridge v1.9 ready")
 
         # Defer connection until after the window is shown and the Qt event loop
         # is running. In a packaged macOS app, doing serial auto-detection during
@@ -368,6 +373,11 @@ class RFBridgeWindow:
         preferences_action.triggered.connect(self.open_preferences)
         app_menu.addAction(preferences_action)
 
+        tools_menu = self.window.menuBar().addMenu("Tools")
+        mic_plot_action = self.QAction("Mic Plot…", self.window)
+        mic_plot_action.triggered.connect(self.open_mic_plot)
+        tools_menu.addAction(mic_plot_action)
+
     def apply_theme(self):
         self.theme_name = self.resolve_theme_name(self.appearance)
         self.theme = THEMES[self.theme_name]
@@ -380,6 +390,7 @@ class RFBridgeWindow:
         self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
         self.update_connection_state(self.connected, self.connection_status.text())
+        self.render_mic_markers()
 
     def open_capture(self):
         from PySide6.QtWidgets import QFileDialog
@@ -416,6 +427,7 @@ class RFBridgeWindow:
 
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
         self.cursor_line.setPos(self.freqs_mhz[0])
+        self.render_mic_markers()
         self.live_curve.setData(self.freqs_mhz, self.display_dbm)
         self.update_top_frequencies(self.display_dbm)
         self.plot.setTitle(
@@ -438,9 +450,166 @@ class RFBridgeWindow:
         self.return_live_button.setEnabled(False)
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
         self.cursor_line.setPos(self.freqs_mhz[0])
+        self.render_mic_markers()
         self.render_scan(self.latest_dbm)
         self.log("Returned to live trace")
         self.update_status()
+
+
+    def open_mic_plot(self):
+        from PySide6.QtWidgets import (
+            QCheckBox,
+            QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QDoubleSpinBox,
+            QHBoxLayout,
+            QLineEdit,
+            QPushButton,
+            QTableWidget,
+            QTableWidgetItem,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(self.window)
+        dialog.setWindowTitle("Mic Plot")
+        dialog.setMinimumSize(720, 420)
+
+        layout = QVBoxLayout(dialog)
+        table = QTableWidget(0, 4)
+        table.setHorizontalHeaderLabels(["Visible", "Name", "Frequency MHz", "Color"])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.verticalHeader().setVisible(False)
+
+        def color_name_for(value):
+            for name, color in MARKER_COLORS:
+                if color.lower() == str(value).lower():
+                    return name
+            return "Green"
+
+        def add_row(marker=None):
+            marker = marker or {
+                "name": "",
+                "frequency_mhz": 500.000,
+                "color": DEFAULT_MARKER_COLOR,
+                "visible": True,
+            }
+            row = table.rowCount()
+            table.insertRow(row)
+
+            visible = QCheckBox()
+            visible.setChecked(bool(marker.get("visible", True)))
+            table.setCellWidget(row, 0, visible)
+
+            name = QLineEdit(str(marker.get("name", "")))
+            name.setPlaceholderText("Vocal 1")
+            table.setCellWidget(row, 1, name)
+
+            frequency = QDoubleSpinBox()
+            frequency.setRange(1.0, 6000.0)
+            frequency.setDecimals(3)
+            frequency.setSingleStep(0.025)
+            frequency.setValue(float(marker.get("frequency_mhz", 500.000)))
+            table.setCellWidget(row, 2, frequency)
+
+            color = QComboBox()
+            for color_name, color_value in MARKER_COLORS:
+                color.addItem(color_name, color_value)
+            index = color.findText(color_name_for(marker.get("color", DEFAULT_MARKER_COLOR)))
+            color.setCurrentIndex(max(index, 0))
+            table.setCellWidget(row, 3, color)
+
+        for marker in self.mic_markers:
+            add_row(marker)
+
+        add_button = QPushButton("Add Marker")
+        remove_button = QPushButton("Remove Selected")
+        button_row = QHBoxLayout()
+        button_row.addWidget(add_button)
+        button_row.addWidget(remove_button)
+        button_row.addStretch(1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        def remove_selected():
+            rows = sorted({index.row() for index in table.selectedIndexes()}, reverse=True)
+            for row in rows:
+                table.removeRow(row)
+
+        add_button.clicked.connect(add_row)
+        remove_button.clicked.connect(remove_selected)
+
+        layout.addWidget(table)
+        layout.addLayout(button_row)
+        layout.addWidget(buttons)
+        dialog.setStyleSheet(self.stylesheet())
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        markers = []
+        try:
+            for row in range(table.rowCount()):
+                name_widget = table.cellWidget(row, 1)
+                freq_widget = table.cellWidget(row, 2)
+                color_widget = table.cellWidget(row, 3)
+                visible_widget = table.cellWidget(row, 0)
+                name = name_widget.text().strip() if name_widget else ""
+                if not name:
+                    continue
+                markers.append({
+                    "name": name,
+                    "frequency_mhz": freq_widget.value(),
+                    "color": color_widget.currentData(),
+                    "visible": visible_widget.isChecked(),
+                })
+            self.mic_markers = save_markers(self.settings, markers)
+        except ValueError as exc:
+            self.show_error(str(exc))
+            return
+
+        self.render_mic_markers()
+        self.log(f"Mic plot updated: {len(self.mic_markers)} marker(s)")
+
+    def render_mic_markers(self):
+        for item in self.mic_marker_items:
+            try:
+                self.plot.removeItem(item)
+            except Exception:
+                pass
+        self.mic_marker_items = []
+
+        if not getattr(self, "plot", None):
+            return
+
+        for marker in self.mic_markers:
+            if not marker.get("visible", True):
+                continue
+            freq = float(marker["frequency_mhz"])
+            color = marker.get("color", DEFAULT_MARKER_COLOR)
+            line = self.pg.InfiniteLine(
+                pos=freq,
+                angle=90,
+                pen=self.pg.mkPen(color, width=1.5),
+                movable=False,
+            )
+            line.setZValue(5)
+            label = self.pg.TextItem(
+                text=f"{marker['name']}\n{freq:.3f} MHz",
+                color=color,
+                anchor=(0.5, 0.0),
+                fill=self.pg.mkBrush(0, 0, 0, 150),
+                border=self.pg.mkPen(color, width=0.75),
+            )
+            # Place mic plot labels slightly below the top of the graph so
+            # labels remain visible instead of clipping against the title area.
+            label.setPos(freq, -32)
+            label.setZValue(20)
+            self.plot.addItem(line)
+            self.plot.addItem(label)
+            self.mic_marker_items.extend([line, label])
 
     def open_preferences(self):
         from PySide6.QtWidgets import (
@@ -604,6 +773,7 @@ class RFBridgeWindow:
         self.reset_peaks()
         self.plot.setXRange(min(freqs_mhz), max(freqs_mhz), padding=0)
         self.cursor_line.setPos(freqs_mhz[0])
+        self.render_mic_markers()
         self.version_label.setText(f"Device: {version or 'tinySA'}")
         self.range_label.setText(f"Range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz")
         self.update_connection_state(True, f"Connected: {port}")

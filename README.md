@@ -1,8 +1,8 @@
-# RF Bridge v1.8
+# RF Bridge v1.9.1
 
 RF Bridge connects a tinySA to a Wireless Workbench-friendly CSV workflow with a live desktop RF display.
 
-v1.8 adds saved capture loading so previous RF Bridge CSV scans can be opened and inspected without needing a tinySA connected.
+v1.9 adds Mic Plot markers so wireless/mic frequencies can be manually labeled on top of live, frozen, or loaded RF captures. v1.9.1 improves Mic Plot label placement/readability.
 
 ## Highlights
 
@@ -180,12 +180,12 @@ Build the app, then build the DMG:
 The DMG should be created at:
 
 ```text
-dist/RF-Bridge-v1.8-macOS.dmg
+dist/RF-Bridge-v1.9-macOS.dmg
 ```
 
 ## App icon
 
-v1.8 includes:
+v1.9 includes:
 
 ```text
 assets/rf-bridge-icon-1024.png
@@ -233,4 +233,18 @@ assets/                   app icon source assets
 
 ## Notes
 
-v1.8 does not include Apple code signing or notarization. That can come later after the app bundle and DMG flow are stable.
+v1.9 does not include Apple code signing or notarization. That can come later after the app bundle and DMG flow are stable.
+
+## Mic Plot Markers
+
+Use `Tools > Mic Plot…` to add named frequency markers such as vocal mics, IEMs, comms, or known RF trouble spots. Markers are saved in app settings and appear as labeled vertical lines on the graph.
+
+Current marker fields:
+
+- Visible
+- Name
+- Frequency MHz
+- Color preset
+
+Markers display in Live, Frozen, and Loaded Capture modes.
+
