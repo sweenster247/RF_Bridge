@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.4
+- Replaced Matplotlib UI with PySide6 application window
+- Replaced Matplotlib plotting with pyqtgraph
+- Preserved live RF graph behavior
+- Preserved peak hold modes
+- Preserved refresh interval cycling
+- Preserved RF summary and Top 8 RF hits panel
+- Preserved bottom status bar
+- Preserved WWB CSV export behavior
+- Updated dependencies for PySide6 and pyqtgraph
+- Prepared UI layer for future packaged Mac app builds
+
 ## v1.3
 - Refactored RF Bridge into modular app-ready architecture
 - Split tinySA serial handling into dedicated module

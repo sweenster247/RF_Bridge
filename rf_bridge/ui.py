@@ -1,7 +1,6 @@
-"""Matplotlib-based RF Bridge v1.3 UI.
+"""PySide6 / pyqtgraph RF Bridge v1.4 UI.
 
-This preserves the v1.2 visual behavior while isolating the UI layer so a
-future native app window can replace it cleanly.
+This replaces the Matplotlib UI while preserving the same scan/export behavior.
 """
 
 import bisect
@@ -9,679 +8,463 @@ import time
 
 from .config import SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS
 from .export import save_wwb_csv
-from .tinysa import send_command
-from .utils import parse_numbers, time_12h
+from .scanner import read_scan_dbm
+from .utils import time_12h
 
 
-def run_ui(ser, output_dir, gig_slug, freqs_mhz, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None):
+REFRESH_MODES = [0.5, 1, 2, 5, 10]
+PEAK_MODES = [
+    ("OFF", None),
+    ("LATCH", "latch"),
+    ("1 min", 60),
+    ("5 min", 300),
+    ("15 min", 900),
+]
 
-    import matplotlib.pyplot as plt
-    from matplotlib.widgets import Button
 
-    plt.style.use("dark_background")
+def format_seconds(seconds):
+    if float(seconds).is_integer():
+        return str(int(seconds))
+    return str(seconds)
 
-    refresh_modes = [
-        0.5,
-        1,
-        2,
-        5,
-        10,
-    ]
 
-    refresh_index = min(
-        range(len(refresh_modes)),
-        key=lambda index: abs(refresh_modes[index] - ui_update_seconds)
-    )
+class RFBridgeWindow:
+    """Small wrapper so run_ui can stay as the public UI entrypoint."""
 
-    state = {
-        "peak_enabled": False,
-        "peak_hold": None,
-        "latest_dbm": [],
-        "last_cursor_index": None,
-        "last_save_time": 0,
-        "peak_mode_index": 0,
-        "refresh_index": refresh_index,
-        "refresh_seconds": ui_update_seconds,
+    def __init__(self, ser, output_dir, gig_slug, freqs_mhz, ui_update_seconds, selected_port):
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtWidgets import (
+            QApplication,
+            QFrame,
+            QHBoxLayout,
+            QLabel,
+            QMainWindow,
+            QPushButton,
+            QSizePolicy,
+            QVBoxLayout,
+            QWidget,
+        )
+        import pyqtgraph as pg
 
-        "refresh_modes": refresh_modes,
+        self.Qt = Qt
+        self.QTimer = QTimer
+        self.pg = pg
 
-        "peak_modes": [
-            ("OFF", None),
-            ("LATCH", "latch"),
-            ("1 min", 60),
-            ("5 min", 300),
-            ("15 min", 900),
-        ],
+        self.ser = ser
+        self.output_dir = output_dir
+        self.gig_slug = gig_slug
+        self.freqs_mhz = freqs_mhz
+        self.selected_port = selected_port or "auto"
 
-        "peak_history": [],
-    }
+        self.latest_dbm = []
+        self.last_save_time = 0
+        self.last_cursor_index = None
+        self.peak_mode_index = 0
+        self.peak_enabled = False
+        self.peak_hold = None
+        self.peak_history = []
+        self.top_markers = []
 
-    fig = plt.figure(figsize=(20, 10), constrained_layout=False)
-    fig.patch.set_facecolor("#111111")
+        self.refresh_index = min(
+            range(len(REFRESH_MODES)),
+            key=lambda index: abs(REFRESH_MODES[index] - ui_update_seconds),
+        )
+        self.refresh_seconds = REFRESH_MODES[self.refresh_index]
 
-    # Fixed normalized layout: wide plot, right summary/control rail, bottom status bar.
-    # This scales with the window, but it is intentionally not a fully responsive GUI layout.
-    ax = fig.add_axes([0.060, 0.245, 0.715, 0.640])
-    ax.set_facecolor("#181818")
+        self.app = QApplication.instance() or QApplication([])
+        self.window = QMainWindow()
+        self.window.setWindowTitle("RF Bridge")
+        self.window.resize(1500, 850)
 
-    side_ax = fig.add_axes([0.815, 0.470, 0.160, 0.395])
-    side_ax.set_facecolor("#111111")
-    side_ax.axis("off")
+        root = QWidget()
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(18, 18, 18, 14)
+        root_layout.setSpacing(12)
 
-    # Thin visual divider between the plot and the right panel.
-    divider_ax = fig.add_axes([0.795, 0.185, 0.0015, 0.700])
-    divider_ax.set_facecolor("#777777")
-    divider_ax.set_xticks([])
-    divider_ax.set_yticks([])
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(18)
 
-    # Control buttons sit higher and line up under the RF summary.
-    button_ax = fig.add_axes([0.815, 0.330, 0.160, 0.055])
-    reset_ax = fig.add_axes([0.815, 0.255, 0.160, 0.055])
-    refresh_ax = fig.add_axes([0.815, 0.180, 0.160, 0.055])
+        pg.setConfigOptions(antialias=True)
+        self.plot = pg.PlotWidget()
+        self.plot.setBackground("#181818")
+        self.plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.plot.showGrid(x=True, y=True, alpha=0.25)
+        self.plot.setLabel("bottom", "Frequency", units="MHz")
+        self.plot.setLabel("left", "Amplitude", units="dBm")
+        self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color="#eeeeee", size="16pt")
+        self.plot.setXRange(min(freqs_mhz), max(freqs_mhz), padding=0)
+        self.plot.setYRange(-110, -20, padding=0)
 
-    # Bottom status strip spans the bottom like an application status bar.
-    status_ax = fig.add_axes([0.030, 0.070, 0.945, 0.070])
-    status_ax.set_facecolor("#181818")
-    status_ax.set_xticks([])
-    status_ax.set_yticks([])
-    for spine in status_ax.spines.values():
-        spine.set_color("#555555")
+        axis_pen = pg.mkPen("#888888")
+        self.plot.getAxis("bottom").setPen(axis_pen)
+        self.plot.getAxis("left").setPen(axis_pen)
+        self.plot.getAxis("bottom").setTextPen("#dddddd")
+        self.plot.getAxis("left").setTextPen("#dddddd")
 
-    try:
-        fig.canvas.manager.set_window_title("RF Bridge")
-    except Exception:
-        pass
-
-    live_line, = ax.plot(
-        [],
-        [],
-        linewidth=1.5,
-        color="#00ff99",
-        label="Live"
-    )
-
-    peak_line, = ax.plot(
-        [],
-        [],
-        linewidth=1.2,
-        color="#ff3333",
-        alpha=0.95,
-        label="Peak Hold",
-    )
-
-    ax.axhline(
-        y=-85,
-        color="#ffaa00",
-        linestyle="--",
-        linewidth=1,
-        alpha=0.7,
-        label="-85 dBm",
-    )
-
-    ax.axhline(
-        y=-60,
-        color="#ff00aa",
-        linestyle="--",
-        linewidth=1,
-        alpha=0.7,
-        label="-60 dBm",
-    )
-
-    ax.set_title(f"RF Bridge - {gig_slug}")
-
-    ax.set_xlabel("Frequency MHz")
-    ax.set_ylabel("Amplitude dBm")
-
-    ax.grid(which="major", alpha=0.25)
-
-    ax.legend(
-        loc="lower right",
-        facecolor="#181818",
-        edgecolor="#444444",
-    )
-
-    ax.set_xlim(
-        min(freqs_mhz),
-        max(freqs_mhz)
-    )
-
-    start_mhz = min(freqs_mhz)
-    stop_mhz = max(freqs_mhz)
-
-    tick_step = 25
-
-    ticks = []
-    current = start_mhz
-
-    while current < stop_mhz:
-        ticks.append(round(current, 3))
-        current += tick_step
-
-    if round(stop_mhz, 3) not in ticks:
-        ticks.append(round(stop_mhz, 3))
-
-    ax.set_xticks(ticks)
-
-    ax.set_ylim(-110, -20)
-
-    ax.set_yticks([
-        -110,
-        -100,
-        -90,
-        -85,
-        -80,
-        -70,
-        -60,
-        -40,
-        -20,
-    ])
-
-    readout = ax.text(
-        0.01,
-        0.98,
-        "",
-        transform=ax.transAxes,
-        va="top",
-        ha="left",
-
-        bbox=dict(
-            facecolor="#222222",
-            alpha=0.9,
-            edgecolor="#00ff99",
-        ),
-    )
-
-    vertical_cursor = ax.axvline(
-        x=freqs_mhz[0],
-        color="#00ff99",
-        alpha=0.45,
-        linewidth=1,
-        visible=False,
-    )
-
-    peak_button = Button(
-        button_ax,
-        "Peak: OFF",
-        color="#222222",
-        hovercolor="#333333",
-    )
-
-    reset_button = Button(
-        reset_ax,
-        "Reset Peaks",
-        color="#222222",
-        hovercolor="#333333",
-    )
-
-    refresh_button = Button(
-        refresh_ax,
-        f"Refresh: {state['refresh_seconds']:g}s",
-        color="#222222",
-        hovercolor="#333333",
-    )
-
-    for button in (peak_button, reset_button, refresh_button):
-        button.label.set_fontsize(11)
-        button.label.set_color("#eeeeee")
-
-    status_text = status_ax.text(
-        0.035,
-        0.5,
-        "",
-        va="center",
-        ha="left",
-        fontsize=11,
-        family="monospace",
-        color="#eeeeee",
-    )
-
-    def update_status(now=None):
-
-        if now is None:
-            now = time.time()
-
-        if state["last_save_time"]:
-            next_save = max(
-                0,
-                SCAN_INTERVAL_SECONDS - int(now - state["last_save_time"])
-            )
-        else:
-            next_save = 0
-
-        minutes = next_save // 60
-        seconds = next_save % 60
-
-        port_label = selected_port or "auto"
-
-        status_text.set_text(
-            f"Scan Folder: {output_dir}   |   "
-            f"Latest: latest_scan.csv   |   "
-            f"Next Save: {minutes}:{seconds:02d}   |   "
-            f"Refresh: {format_seconds(state['refresh_seconds'])}s   |   "
-            f"tinySA: {port_label}"
+        self.live_curve = self.plot.plot(
+            [],
+            [],
+            pen=pg.mkPen("#00ff99", width=2),
+            name="Live",
+        )
+        self.peak_curve = self.plot.plot(
+            [],
+            [],
+            pen=pg.mkPen("#ff3333", width=1.5),
+            name="Peak Hold",
         )
 
-    def nearest_index(freq):
-
-        idx = bisect.bisect_left(
-            freqs_mhz,
-            freq
+        self.threshold_85 = pg.InfiniteLine(
+            pos=-85,
+            angle=0,
+            pen=pg.mkPen("#ffaa00", width=1, style=self.Qt.DashLine),
         )
+        self.threshold_60 = pg.InfiniteLine(
+            pos=-60,
+            angle=0,
+            pen=pg.mkPen("#ff00aa", width=1, style=self.Qt.DashLine),
+        )
+        self.plot.addItem(self.threshold_85)
+        self.plot.addItem(self.threshold_60)
+
+        self.cursor_line = pg.InfiniteLine(
+            pos=freqs_mhz[0],
+            angle=90,
+            pen=pg.mkPen("#00ff99", width=1),
+        )
+        self.cursor_line.setVisible(False)
+        self.plot.addItem(self.cursor_line)
+
+        side_panel = QFrame()
+        side_panel.setObjectName("sidePanel")
+        side_panel.setFixedWidth(330)
+        side_layout = QVBoxLayout(side_panel)
+        side_layout.setContentsMargins(16, 16, 16, 16)
+        side_layout.setSpacing(12)
+
+        self.summary_label = QLabel("RF SUMMARY\n──────────────────────\n\nWaiting for scan...")
+        self.summary_label.setObjectName("summaryLabel")
+        self.summary_label.setAlignment(self.Qt.AlignTop | self.Qt.AlignLeft)
+        self.summary_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
+
+        self.hover_label = QLabel("Hover over the graph for live readout.")
+        self.hover_label.setObjectName("hoverLabel")
+        self.hover_label.setAlignment(self.Qt.AlignTop | self.Qt.AlignLeft)
+        self.hover_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
+
+        self.peak_button = QPushButton("Peak: OFF")
+        self.reset_button = QPushButton("Reset Peaks")
+        self.refresh_button = QPushButton(f"Refresh: {format_seconds(self.refresh_seconds)}s")
+
+        for button in (self.peak_button, self.reset_button, self.refresh_button):
+            button.setMinimumHeight(42)
+
+        side_layout.addWidget(self.summary_label, stretch=1)
+        side_layout.addWidget(self.hover_label)
+        side_layout.addWidget(self.peak_button)
+        side_layout.addWidget(self.reset_button)
+        side_layout.addWidget(self.refresh_button)
+
+        content_layout.addWidget(self.plot, stretch=1)
+        content_layout.addWidget(side_panel)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("statusLabel")
+        self.status_label.setMinimumHeight(46)
+        self.status_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
+
+        root_layout.addLayout(content_layout, stretch=1)
+        root_layout.addWidget(self.status_label)
+        self.window.setCentralWidget(root)
+
+        self.window.setStyleSheet(
+            """
+            QMainWindow, QWidget {
+                background: #111111;
+                color: #eeeeee;
+                font-family: Arial, Helvetica, sans-serif;
+            }
+            QFrame#sidePanel {
+                background: #141414;
+                border-left: 1px solid #555555;
+            }
+            QLabel#summaryLabel, QLabel#hoverLabel {
+                color: #eeeeee;
+                font-family: Menlo, Monaco, Consolas, monospace;
+                font-size: 13px;
+            }
+            QLabel#hoverLabel {
+                background: #202020;
+                border: 1px solid #444444;
+                border-radius: 6px;
+                padding: 8px;
+            }
+            QLabel#statusLabel {
+                background: #181818;
+                border: 1px solid #555555;
+                border-radius: 6px;
+                color: #eeeeee;
+                font-family: Menlo, Monaco, Consolas, monospace;
+                font-size: 12px;
+                padding-left: 14px;
+            }
+            QPushButton {
+                background: #222222;
+                color: #eeeeee;
+                border: 1px solid #555555;
+                border-radius: 6px;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background: #333333;
+            }
+            QPushButton:pressed {
+                background: #444444;
+            }
+            """
+        )
+
+        self.peak_button.clicked.connect(self.toggle_peak)
+        self.reset_button.clicked.connect(self.reset_peaks)
+        self.refresh_button.clicked.connect(self.toggle_refresh)
+        self.plot.scene().sigMouseMoved.connect(self.on_mouse_move)
+
+        self.scan_timer = self.QTimer()
+        self.scan_timer.timeout.connect(self.update_scan)
+
+        self.status_timer = self.QTimer()
+        self.status_timer.timeout.connect(self.update_status)
+        self.status_timer.start(1000)
+
+        self.set_refresh_interval(self.refresh_seconds)
+        self.update_scan()
+
+    def nearest_index(self, freq):
+        idx = bisect.bisect_left(self.freqs_mhz, freq)
 
         if idx <= 0:
             return 0
 
-        if idx >= len(freqs_mhz):
-            return len(freqs_mhz) - 1
+        if idx >= len(self.freqs_mhz):
+            return len(self.freqs_mhz) - 1
 
         before = idx - 1
         after = idx
 
-        if (
-            abs(freqs_mhz[before] - freq)
-            <=
-            abs(freqs_mhz[after] - freq)
-        ):
+        if abs(self.freqs_mhz[before] - freq) <= abs(self.freqs_mhz[after] - freq):
             return before
 
         return after
 
-    def update_top_frequencies(dbm):
+    def set_refresh_interval(self, seconds):
+        self.refresh_seconds = seconds
+        self.refresh_button.setText(f"Refresh: {format_seconds(seconds)}s")
+        self.scan_timer.start(int(seconds * 1000))
+        print(f"UI refresh changed to {seconds} seconds")
+        self.update_status()
 
-        median_floor = (
-            sorted(dbm)[len(dbm) // 2]
-        )
+    def toggle_refresh(self):
+        self.refresh_index = (self.refresh_index + 1) % len(REFRESH_MODES)
+        self.set_refresh_interval(REFRESH_MODES[self.refresh_index])
 
+    def toggle_peak(self):
+        self.peak_mode_index = (self.peak_mode_index + 1) % len(PEAK_MODES)
+        label, window_seconds = PEAK_MODES[self.peak_mode_index]
+
+        self.peak_button.setText(f"Peak: {label}")
+
+        if label == "OFF":
+            self.peak_enabled = False
+            self.peak_hold = None
+            self.peak_history = []
+            self.peak_curve.setData([], [])
+        else:
+            self.peak_enabled = True
+            if self.latest_dbm:
+                now = time.time()
+                self.peak_history.append((now, self.latest_dbm.copy()))
+                self.peak_hold = self.latest_dbm.copy()
+                self.peak_curve.setData(self.freqs_mhz, self.peak_hold)
+
+    def reset_peaks(self):
+        self.peak_enabled = False
+        self.peak_mode_index = 0
+        self.peak_hold = None
+        self.peak_history = []
+        self.peak_button.setText("Peak: OFF")
+        self.peak_curve.setData([], [])
+        self.update_hover_label(None)
+
+    def update_top_frequencies(self, dbm):
+        median_floor = sorted(dbm)[len(dbm) // 2]
         strongest = sorted(
-            zip(freqs_mhz, dbm),
+            zip(self.freqs_mhz, dbm),
             key=lambda pair: pair[1],
             reverse=True,
         )[:8]
 
         text = "RF SUMMARY\n"
         text += "──────────────────────\n\n"
-
         text += "Median Floor\n"
         text += f"{median_floor:7.2f} dBm\n\n"
-
         text += "TOP 8 RF HITS\n"
         text += "──────────────────────\n"
 
-        for i, (freq, level) in enumerate(
-            strongest,
-            start=1
-        ):
+        for i, (freq, level) in enumerate(strongest, start=1):
+            text += f"{i}. {freq:9.3f} MHz  {level:7.2f} dBm\n"
 
-            text += (
-                f"{i}. {freq:9.3f} MHz  {level:7.2f} dBm\n"
-            )
+        self.summary_label.setText(text)
 
-        side_ax.clear()
+        for marker in self.top_markers:
+            self.plot.removeItem(marker)
+        self.top_markers = []
 
-        side_ax.set_facecolor("#111111")
-        side_ax.axis("off")
-
-        side_ax.text(
-            0.03,
-            0.97,
-            text,
-            va="top",
-            ha="left",
-            fontsize=12,
-            family="monospace",
-            color="#eeeeee",
-        )
-
-        # Remove old Top 8 markers
-        for line in ax.lines[:]:
-
-            if getattr(
-                line,
-                "_top8_marker",
-                False
-            ):
-                line.remove()
-
-        # Draw new Top 8 markers
         for freq, level in strongest:
-
-            marker = ax.axvline(
-                x=freq,
-                color="#666666",
-                linestyle=":",
-                linewidth=0.8,
-                alpha=0.45,
-                zorder=0,
+            marker = self.pg.InfiniteLine(
+                pos=freq,
+                angle=90,
+                pen=self.pg.mkPen("#666666", width=1, style=self.Qt.DotLine),
             )
+            marker.setZValue(-10)
+            self.plot.addItem(marker)
+            self.top_markers.append(marker)
 
-            marker._top8_marker = True
-
-    def toggle_peak(event):
-
-        state["peak_mode_index"] = (
-            state["peak_mode_index"] + 1
-        ) % len(state["peak_modes"])
-
-        label, window_seconds = (
-            state["peak_modes"][
-                state["peak_mode_index"]
-            ]
-        )
-
-        peak_button.label.set_text(
-            f"Peak: {label}"
-        )
-
-        if label == "OFF":
-
-            state["peak_enabled"] = False
-
-            state["peak_hold"] = None
-
-            state["peak_history"] = []
-
-            peak_line.set_data([], [])
-
-        else:
-
-            state["peak_enabled"] = True
-
-            if state["latest_dbm"]:
-
-                now = time.time()
-
-                state["peak_history"].append(
-                    (
-                        now,
-                        state["latest_dbm"].copy()
-                    )
-                )
-
-                state["peak_hold"] = (
-                    state["latest_dbm"].copy()
-                )
-
-                peak_line.set_data(
-                    freqs_mhz,
-                    state["peak_hold"]
-                )
-
-        fig.canvas.draw_idle()
-
-    timer_state = {
-        "timer": None,
-    }
-
-    def format_seconds(seconds):
-
-        if float(seconds).is_integer():
-            return str(int(seconds))
-
-        return str(seconds)
-
-    def start_scan_timer(seconds):
-
-        if timer_state["timer"] is not None:
-            timer_state["timer"].stop()
-
-        timer = fig.canvas.new_timer(
-            interval=int(seconds * 1000)
-        )
-
-        timer.add_callback(update_scan)
-
-        timer.start()
-
-        timer_state["timer"] = timer
-
-    def set_refresh_interval(seconds):
-
-        state["refresh_seconds"] = seconds
-
-        refresh_button.label.set_text(
-            f"Refresh: {format_seconds(seconds)}s"
-        )
-
-        start_scan_timer(seconds)
-
-        print(f"UI refresh changed to {seconds} seconds")
-
-        update_status()
-
-        fig.canvas.draw_idle()
-
-    def toggle_refresh(event):
-
-        state["refresh_index"] = (
-            state["refresh_index"] + 1
-        ) % len(state["refresh_modes"])
-
-        set_refresh_interval(
-            state["refresh_modes"][state["refresh_index"]]
-        )
-
-    def reset_peaks(event):
-
-        state["peak_enabled"] = False
-
-        state["peak_mode_index"] = 0
-
-        state["peak_hold"] = None
-
-        state["peak_history"] = []
-
-        peak_button.label.set_text(
-            "Peak: OFF"
-        )
-
-        peak_line.set_data([], [])
-
-        fig.canvas.draw_idle()
-
-    peak_button.on_clicked(toggle_peak)
-
-    reset_button.on_clicked(reset_peaks)
-
-    refresh_button.on_clicked(toggle_refresh)
-
-    def on_mouse_move(event):
-
-        if (
-            event.inaxes != ax
-            or event.xdata is None
-            or not state["latest_dbm"]
-        ):
-
-            if vertical_cursor.get_visible():
-
-                vertical_cursor.set_visible(False)
-
-                readout.set_text("")
-
-                fig.canvas.draw_idle()
-
+    def update_hover_label(self, idx):
+        if idx is None or not self.latest_dbm:
+            self.hover_label.setText("Hover over the graph for live readout.")
             return
 
-        idx = nearest_index(event.xdata)
+        nearest_freq = self.freqs_mhz[idx]
+        nearest_level = self.latest_dbm[idx]
 
-        if idx == state["last_cursor_index"]:
-            return
-
-        state["last_cursor_index"] = idx
-
-        nearest_freq = freqs_mhz[idx]
-
-        nearest_level = (
-            state["latest_dbm"][idx]
-        )
-
-        if state["peak_hold"]:
-
-            nearest_peak = (
-                state["peak_hold"][idx]
-            )
-
-            readout.set_text(
+        if self.peak_hold:
+            nearest_peak = self.peak_hold[idx]
+            self.hover_label.setText(
                 f"{nearest_freq:.6f} MHz\n"
                 f"Live: {nearest_level:.2f} dBm\n"
                 f"Peak: {nearest_peak:.2f} dBm"
             )
-
         else:
-
-            readout.set_text(
+            self.hover_label.setText(
                 f"{nearest_freq:.6f} MHz\n"
                 f"Live: {nearest_level:.2f} dBm"
             )
 
-        vertical_cursor.set_xdata(
-            [nearest_freq, nearest_freq]
-        )
+    def on_mouse_move(self, scene_pos):
+        if not self.latest_dbm:
+            return
 
-        vertical_cursor.set_visible(True)
+        plot_item = self.plot.getPlotItem()
+        view_box = plot_item.vb
 
-        fig.canvas.draw_idle()
+        if not view_box.sceneBoundingRect().contains(scene_pos):
+            self.cursor_line.setVisible(False)
+            self.update_hover_label(None)
+            return
 
-    fig.canvas.mpl_connect(
-        "motion_notify_event",
-        on_mouse_move
-    )
+        mouse_point = view_box.mapSceneToView(scene_pos)
+        idx = self.nearest_index(mouse_point.x())
 
-    def update_scan():
+        if idx == self.last_cursor_index:
+            return
 
-        dbm = parse_numbers(
-            send_command(ser, "data 1")
-        )
+        self.last_cursor_index = idx
+        nearest_freq = self.freqs_mhz[idx]
+        self.cursor_line.setPos(nearest_freq)
+        self.cursor_line.setVisible(True)
+        self.update_hover_label(idx)
 
-        if len(dbm) != len(freqs_mhz):
+    def update_scan(self):
+        try:
+            dbm = read_scan_dbm(self.ser)
+        except Exception as exc:
+            self.status_label.setText(f"Scan error: {exc}")
+            return
 
+        if len(dbm) != len(self.freqs_mhz):
             print(
                 f"Warning: frequency/data mismatch: "
-                f"{len(freqs_mhz)} freqs, "
+                f"{len(self.freqs_mhz)} freqs, "
                 f"{len(dbm)} levels"
             )
+            return
 
-            return True
+        self.latest_dbm = dbm
+        self.last_cursor_index = None
 
-        state["latest_dbm"] = dbm
-
-        state["last_cursor_index"] = None
-
-        if state["peak_enabled"]:
-
+        if self.peak_enabled:
             now = time.time()
-
-            label, window_seconds = (
-                state["peak_modes"][
-                    state["peak_mode_index"]
-                ]
-            )
-
-            state["peak_history"].append(
-                (
-                    now,
-                    dbm.copy()
-                )
-            )
+            label, window_seconds = PEAK_MODES[self.peak_mode_index]
+            self.peak_history.append((now, dbm.copy()))
 
             if window_seconds == "latch":
-
-                if state["peak_hold"] is None:
-
-                    state["peak_hold"] = dbm.copy()
-
+                if self.peak_hold is None:
+                    self.peak_hold = dbm.copy()
                 else:
-
-                    state["peak_hold"] = [
+                    self.peak_hold = [
                         max(old, new)
-
-                        for old, new in zip(
-                            state["peak_hold"],
-                            dbm
-                        )
+                        for old, new in zip(self.peak_hold, dbm)
                     ]
-
             else:
-
                 cutoff = now - window_seconds
-
-                state["peak_history"] = [
-
+                self.peak_history = [
                     sample
-
-                    for sample in state["peak_history"]
-
+                    for sample in self.peak_history
                     if sample[0] >= cutoff
                 ]
 
-                if state["peak_history"]:
+                if self.peak_history:
+                    samples = [sample[1] for sample in self.peak_history]
+                    self.peak_hold = [max(values) for values in zip(*samples)]
 
-                    samples = [
+            if self.peak_hold:
+                self.peak_curve.setData(self.freqs_mhz, self.peak_hold)
 
-                        sample[1]
-
-                        for sample in state["peak_history"]
-                    ]
-
-                    state["peak_hold"] = [
-
-                        max(values)
-
-                        for values in zip(*samples)
-                    ]
-
-            if state["peak_hold"]:
-
-                peak_line.set_data(
-                    freqs_mhz,
-                    state["peak_hold"]
-                )
-
-        live_line.set_data(
-            freqs_mhz,
-            dbm
-        )
-
-        update_top_frequencies(dbm)
-
-        ax.set_title(
-            f"RF Bridge - "
-            f"{gig_slug} - "
-            f"{time_12h()}"
-        )
+        self.live_curve.setData(self.freqs_mhz, dbm)
+        self.update_top_frequencies(dbm)
+        self.plot.setTitle(f"RF Bridge - {self.gig_slug} - {time_12h()}", color="#eeeeee", size="16pt")
 
         now = time.time()
-
-        if (
-            now - state["last_save_time"]
-            >= SCAN_INTERVAL_SECONDS
-        ):
-
+        if now - self.last_save_time >= SCAN_INTERVAL_SECONDS:
             print("=" * 50)
+            print(f"Captured {len(dbm)} scan points at {time_12h()}")
+            save_wwb_csv(self.output_dir, self.gig_slug, self.freqs_mhz, dbm)
+            self.last_save_time = now
 
-            print(
-                f"Captured {len(dbm)} scan points at "
-                f"{time_12h()}"
-            )
+        self.update_status(now)
 
-            save_wwb_csv(
-                output_dir,
-                gig_slug,
-                freqs_mhz,
-                dbm
-            )
+    def update_status(self, now=None):
+        if now is None:
+            now = time.time()
 
-            state["last_save_time"] = now
+        if self.last_save_time:
+            next_save = max(0, SCAN_INTERVAL_SECONDS - int(now - self.last_save_time))
+        else:
+            next_save = 0
 
-        update_status(now)
+        minutes = next_save // 60
+        seconds = next_save % 60
 
-        fig.canvas.draw_idle()
+        self.status_label.setText(
+            f"Scan Folder: {self.output_dir}   |   "
+            f"Latest: latest_scan.csv   |   "
+            f"Next Save: {minutes}:{seconds:02d}   |   "
+            f"Refresh: {format_seconds(self.refresh_seconds)}s   |   "
+            f"tinySA: {self.selected_port}"
+        )
 
-        return True
+    def run(self):
+        self.window.show()
+        self.app.exec()
 
-    start_scan_timer(state["refresh_seconds"])
 
-    update_scan()
-
-    plt.show(block=True)
-
+def run_ui(ser, output_dir, gig_slug, freqs_mhz, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None):
+    window = RFBridgeWindow(
+        ser=ser,
+        output_dir=output_dir,
+        gig_slug=gig_slug,
+        freqs_mhz=freqs_mhz,
+        ui_update_seconds=ui_update_seconds,
+        selected_port=selected_port,
+    )
+    window.run()
