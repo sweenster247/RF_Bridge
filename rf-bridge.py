@@ -8,8 +8,9 @@ import time
 from datetime import datetime
 
 import serial
+from serial.tools import list_ports
 
-PORT = "/dev/tty.usbmodem4001"
+PORT = None
 BAUD = 115200
 SCAN_INTERVAL_SECONDS = 300
 UI_UPDATE_SECONDS = 2
@@ -41,6 +42,143 @@ def parse_numbers(output):
             pass
 
     return nums
+
+
+def looks_like_tinysa(*values):
+    """
+    tinySA devices may identify themselves in either the serial `version`
+    response or the USB serial metadata exposed by pyserial.
+
+    Accepting both keeps this command-line workflow from depending on
+    `ls /dev/tty.*` while still requiring a tinySA-looking header/name.
+    """
+    combined = " ".join(
+        str(value or "")
+        for value in values
+    ).lower()
+
+    return "tinysa" in combined
+
+
+def candidate_serial_ports():
+    """
+    Return likely serial devices with Mac-friendly ordering.
+
+    pyserial handles the platform differences for us, so this works better
+    than shelling out to `ls /dev/tty.*`.
+    """
+    ports = list(list_ports.comports())
+
+    def sort_key(port):
+        device = port.device.lower()
+
+        # On macOS, /dev/cu.* is usually the better app-facing serial endpoint.
+        cu_preference = 0 if "/dev/cu." in device else 1
+
+        # USB modems/adapters are more likely than Bluetooth console devices.
+        usb_preference = 0 if ("usb" in device or "modem" in device) else 1
+
+        return (
+            cu_preference,
+            usb_preference,
+            device,
+        )
+
+    return sorted(ports, key=sort_key)
+
+
+def describe_port(port):
+    parts = [port.device]
+
+    if port.description:
+        parts.append(port.description)
+
+    if port.manufacturer:
+        parts.append(port.manufacturer)
+
+    return " — ".join(parts)
+
+
+def find_tinysa_port(baud=BAUD, timeout=1.5):
+    """
+    Find the tinySA serial port.
+
+    First trust pyserial USB metadata, because on macOS the tinySA often
+    advertises itself as something like:
+
+        /dev/cu.usbmodem4001 — tinySA4 — tinysa.org
+
+    Only if metadata is inconclusive do we briefly probe ports with the
+    tinySA `version` command. This avoids opening the selected tinySA twice
+    and causing a temporary macOS "Resource busy" error.
+    """
+    ports = candidate_serial_ports()
+
+    if not ports:
+        raise RuntimeError(
+            "No serial ports were found. Is the tinySA plugged in?"
+        )
+
+    scanned = []
+
+    # Fast path: metadata already says tinySA. Do not open the port here.
+    for port in ports:
+        description = describe_port(port)
+        scanned.append(description)
+
+        if looks_like_tinysa(
+            port.device,
+            port.description,
+            port.manufacturer,
+            port.product,
+            description,
+        ):
+            return port.device, description, scanned
+
+    # Fallback: metadata did not identify it, so probe each port.
+    for port in ports:
+        device = port.device
+
+        try:
+            with serial.Serial(
+                device,
+                baud,
+                timeout=timeout
+            ) as ser:
+                time.sleep(0.7)
+                ser.reset_input_buffer()
+
+                version_output = send_command(
+                    ser,
+                    "version"
+                )
+
+        except (OSError, serial.SerialException):
+            continue
+
+        if looks_like_tinysa(version_output):
+            header = version_output.strip() or describe_port(port)
+            return device, header, scanned
+
+    scanned_text = "\n".join(
+        f"  - {item}"
+        for item in scanned
+    )
+
+    raise RuntimeError(
+        "No tinySA was detected from serial port headers.\n"
+        "Scanned ports:\n"
+        f"{scanned_text}\n\n"
+        "Try forcing it with --port /dev/cu.usbmodem4001."
+    )
+
+
+def validate_frequency_list(freqs_mhz):
+    if not freqs_mhz:
+        raise RuntimeError(
+            "The tinySA returned no frequency points. "
+            "Make sure a sweep range is configured on the device, then rerun RF Bridge."
+        )
 
 
 def save_wwb_csv(output_dir, gig_slug, freqs_mhz, dbm):
@@ -651,7 +789,33 @@ def main():
         help="Show real-time RF graph"
     )
 
+    parser.add_argument(
+        "--port",
+        default=None,
+        help="Manually choose a serial port if auto-detection is not desired"
+    )
+
+    parser.add_argument(
+        "--list-ports",
+        action="store_true",
+        help="List detected serial ports and exit"
+    )
+
     args = parser.parse_args()
+
+    if args.list_ports:
+        ports = candidate_serial_ports()
+
+        if not ports:
+            print("No serial ports found.")
+            return
+
+        print("Detected serial ports:")
+
+        for port in ports:
+            print(f"  - {describe_port(port)}")
+
+        return
 
     gig_name = input("Gig name: ")
 
@@ -667,20 +831,34 @@ def main():
         exist_ok=True
     )
 
+    if args.port:
+        selected_port = args.port
+        version_output = None
+        print(f"Using manually selected port: {selected_port}")
+    else:
+        selected_port, version_output, scanned_ports = find_tinysa_port()
+
+        print("Auto-detected tinySA:")
+        print(f"  {selected_port}")
+
+        if version_output:
+            print(version_output)
+
     with serial.Serial(
-        PORT,
+        selected_port,
         BAUD,
         timeout=2
     ) as ser:
 
         time.sleep(1)
 
-        print(
-            send_command(
+        if version_output is None:
+            version_output = send_command(
                 ser,
                 "version"
-            )
-        )
+            ).strip()
+
+            print(version_output)
 
         freqs_hz = parse_numbers(
             send_command(
@@ -694,6 +872,13 @@ def main():
 
             for f in freqs_hz
         ]
+
+        validate_frequency_list(freqs_mhz)
+
+        print(
+            f"Serial port: "
+            f"{selected_port}"
+        )
 
         print(
             f"Output folder: "
