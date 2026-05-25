@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7
+- Added Preferences window under `RF Bridge > Preferences…`
+- Added appearance setting with System, Dark, and Light options
+- Added persistent default refresh setting from Preferences
+- Added persistent default storage folder setting for future app sessions
+- Added app icon source assets
+- Added macOS `.icns` generation helper script
+- Updated PyInstaller spec to use the RF Bridge app icon
+- Added DMG build script using `create-dmg`
+- Updated documentation for app bundle and DMG workflows
+
 ## v1.6.2
 - Changed packaged-app gig/session prompt to start empty instead of prefilled
 - Added packaged-app storage location prompt after gig/session name

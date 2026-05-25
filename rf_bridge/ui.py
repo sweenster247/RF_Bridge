@@ -1,4 +1,4 @@
-"""PySide6 / pyqtgraph RF Bridge v1.5 UI."""
+"""PySide6 / pyqtgraph RF Bridge v1.7 UI."""
 
 import bisect
 import os
@@ -20,6 +20,53 @@ PEAK_MODES = [
     ("5 min", 300),
     ("15 min", 900),
 ]
+
+THEMES = {
+    "Dark": {
+        "window_bg": "#111111",
+        "panel_bg": "#181818",
+        "side_bg": "#141414",
+        "plot_bg": "#181818",
+        "text": "#eeeeee",
+        "muted_text": "#dddddd",
+        "border": "#555555",
+        "button_bg": "#222222",
+        "button_hover": "#333333",
+        "button_pressed": "#444444",
+        "button_disabled_bg": "#191919",
+        "button_disabled_text": "#777777",
+        "log_bg": "#0f0f0f",
+        "hover_bg": "#202020",
+        "disconnected": "#aa3333",
+        "connected": "#33cc77",
+        "axis": "#888888",
+        "axis_text": "#dddddd",
+        "marker": "#666666",
+    },
+    "Light": {
+        "window_bg": "#f5f5f5",
+        "panel_bg": "#ffffff",
+        "side_bg": "#fafafa",
+        "plot_bg": "#ffffff",
+        "text": "#202020",
+        "muted_text": "#303030",
+        "border": "#c8c8c8",
+        "button_bg": "#f0f0f0",
+        "button_hover": "#e4e4e4",
+        "button_pressed": "#d6d6d6",
+        "button_disabled_bg": "#eeeeee",
+        "button_disabled_text": "#999999",
+        "log_bg": "#ffffff",
+        "hover_bg": "#f7f7f7",
+        "disconnected": "#b00020",
+        "connected": "#087f3f",
+        "axis": "#555555",
+        "axis_text": "#202020",
+        "marker": "#909090",
+    },
+}
+
+APPEARANCE_OPTIONS = ["System", "Dark", "Light"]
 
 
 class UiBridgeFactory:
@@ -53,6 +100,7 @@ def format_seconds(seconds):
 class RFBridgeWindow:
     def __init__(self, output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None):
         from PySide6.QtCore import Qt, QThread, Signal, QMetaObject, Q_ARG, QTimer
+        from PySide6.QtGui import QAction
         from PySide6.QtWidgets import (
             QApplication,
             QComboBox,
@@ -77,6 +125,7 @@ class RFBridgeWindow:
         self.Q_ARG = Q_ARG
         self.QMessageBox = QMessageBox
         self.QTimer = QTimer
+        self.QAction = QAction
         self.pg = pg
 
         self.output_dir = output_dir
@@ -98,6 +147,9 @@ class RFBridgeWindow:
         self.worker = None
         self.port_map = {}
         self.settings = AppSettings()
+        self.appearance = self.settings.get_appearance()
+        self.theme_name = self.resolve_theme_name(self.appearance)
+        self.theme = THEMES[self.theme_name]
         self.ui_bridge = UiBridgeFactory.create()
         self.ui_bridge.connected.connect(self.on_connected)
         self.ui_bridge.scan_ready.connect(self.on_scan_ready)
@@ -162,19 +214,19 @@ class RFBridgeWindow:
 
         pg.setConfigOptions(antialias=True)
         self.plot = pg.PlotWidget()
-        self.plot.setBackground("#181818")
+        self.plot.setBackground(self.theme["plot_bg"])
         self.plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.plot.showGrid(x=True, y=True, alpha=0.25)
         self.plot.setLabel("bottom", "Frequency", units="MHz")
         self.plot.setLabel("left", "Amplitude", units="dBm")
-        self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color="#eeeeee", size="16pt")
+        self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
         self.plot.setYRange(-110, -20, padding=0)
 
-        axis_pen = pg.mkPen("#888888")
+        axis_pen = pg.mkPen(self.theme["axis"])
         self.plot.getAxis("bottom").setPen(axis_pen)
         self.plot.getAxis("left").setPen(axis_pen)
-        self.plot.getAxis("bottom").setTextPen("#dddddd")
-        self.plot.getAxis("left").setTextPen("#dddddd")
+        self.plot.getAxis("bottom").setTextPen(self.theme["axis_text"])
+        self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
 
         self.live_curve = self.plot.plot([], [], pen=pg.mkPen("#00ff99", width=2), name="Live")
         self.peak_curve = self.plot.plot([], [], pen=pg.mkPen("#ff3333", width=1.5), name="Peak Hold")
@@ -234,7 +286,8 @@ class RFBridgeWindow:
         root_layout.addWidget(self.status_label)
         self.window.setCentralWidget(root)
 
-        self.window.setStyleSheet(self.stylesheet())
+        self.create_menus()
+        self.apply_theme()
 
         self.refresh_ports_button.clicked.connect(self.populate_ports)
         self.connect_button.clicked.connect(self.connect_device)
@@ -249,7 +302,7 @@ class RFBridgeWindow:
         self.populate_ports()
         self.update_connection_state(False)
         self.update_status()
-        self.log("RF Bridge v1.6.2 ready")
+        self.log("RF Bridge v1.7 ready")
 
         # Defer connection until after the window is shown and the Qt event loop
         # is running. In a packaged macOS app, doing serial auto-detection during
@@ -259,22 +312,131 @@ class RFBridgeWindow:
         else:
             self.QTimer.singleShot(250, self.try_auto_connect)
 
+    def resolve_theme_name(self, appearance):
+        if appearance == "Light":
+            return "Light"
+        if appearance == "System":
+            try:
+                scheme = self.app.styleHints().colorScheme()
+                if scheme == self.Qt.ColorScheme.Light:
+                    return "Light"
+            except Exception:
+                pass
+        return "Dark"
+
     def stylesheet(self):
-        return """
-        QMainWindow, QWidget { background: #111111; color: #eeeeee; font-family: Arial, Helvetica, sans-serif; }
-        QFrame#connectionPanel { background: #181818; border: 1px solid #444444; border-radius: 8px; }
-        QFrame#sidePanel { background: #141414; border-left: 1px solid #555555; }
-        QLabel#summaryLabel, QLabel#hoverLabel { color: #eeeeee; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; }
-        QLabel#hoverLabel { background: #202020; border: 1px solid #444444; border-radius: 6px; padding: 8px; }
-        QLabel#statusLabel { background: #181818; border: 1px solid #555555; border-radius: 6px; color: #eeeeee; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }
-        QLabel#statusDot { color: #aa3333; font-size: 22px; }
-        QLabel#connectionStatus { font-weight: bold; }
-        QTextEdit#logBox { background: #0f0f0f; border: 1px solid #444444; border-radius: 6px; color: #dddddd; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding: 6px; }
-        QPushButton, QComboBox { background: #222222; color: #eeeeee; border: 1px solid #555555; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }
-        QPushButton:hover, QComboBox:hover { background: #333333; }
-        QPushButton:pressed { background: #444444; }
-        QPushButton:disabled { color: #777777; background: #191919; }
+        t = self.theme
+        return f"""
+        QMainWindow, QWidget {{ background: {t['window_bg']}; color: {t['text']}; font-family: Arial, Helvetica, sans-serif; }}
+        QMenuBar, QMenu {{ background: {t['panel_bg']}; color: {t['text']}; border: 1px solid {t['border']}; }}
+        QMenuBar::item:selected, QMenu::item:selected {{ background: {t['button_hover']}; }}
+        QFrame#connectionPanel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
+        QFrame#sidePanel {{ background: {t['side_bg']}; border-left: 1px solid {t['border']}; }}
+        QLabel#summaryLabel, QLabel#hoverLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; }}
+        QLabel#hoverLabel {{ background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 8px; }}
+        QLabel#statusLabel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }}
+        QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; }}
+        QLabel#connectionStatus {{ font-weight: bold; }}
+        QTextEdit#logBox {{ background: {t['log_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding: 6px; }}
+        QPushButton, QComboBox, QLineEdit {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
+        QPushButton:hover, QComboBox:hover {{ background: {t['button_hover']}; }}
+        QPushButton:pressed {{ background: {t['button_pressed']}; }}
+        QPushButton:disabled {{ color: {t['button_disabled_text']}; background: {t['button_disabled_bg']}; }}
         """
+
+    def create_menus(self):
+        app_menu = self.window.menuBar().addMenu("RF Bridge")
+        preferences_action = self.QAction("Preferences…", self.window)
+        preferences_action.triggered.connect(self.open_preferences)
+        app_menu.addAction(preferences_action)
+
+    def apply_theme(self):
+        self.theme_name = self.resolve_theme_name(self.appearance)
+        self.theme = THEMES[self.theme_name]
+        self.window.setStyleSheet(self.stylesheet())
+        self.plot.setBackground(self.theme["plot_bg"])
+        axis_pen = self.pg.mkPen(self.theme["axis"])
+        self.plot.getAxis("bottom").setPen(axis_pen)
+        self.plot.getAxis("left").setPen(axis_pen)
+        self.plot.getAxis("bottom").setTextPen(self.theme["axis_text"])
+        self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
+        self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
+        self.update_connection_state(self.connected, self.connection_status.text())
+
+    def open_preferences(self):
+        from PySide6.QtWidgets import (
+            QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QFileDialog,
+            QFormLayout,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QPushButton,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(self.window)
+        dialog.setWindowTitle("RF Bridge Preferences")
+        dialog.setMinimumWidth(520)
+
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+
+        appearance_combo = QComboBox()
+        appearance_combo.addItems(APPEARANCE_OPTIONS)
+        appearance_combo.setCurrentText(self.appearance if self.appearance in APPEARANCE_OPTIONS else "Dark")
+
+        refresh_combo = QComboBox()
+        for value in REFRESH_MODES:
+            refresh_combo.addItem(f"{format_seconds(value)} seconds", value)
+        refresh_index = refresh_combo.findData(self.refresh_seconds)
+        if refresh_index >= 0:
+            refresh_combo.setCurrentIndex(refresh_index)
+
+        storage_edit = QLineEdit(self.settings.get_storage_root())
+        browse_button = QPushButton("Browse…")
+        storage_row = QHBoxLayout()
+        storage_row.addWidget(storage_edit, stretch=1)
+        storage_row.addWidget(browse_button)
+
+        def choose_folder():
+            selected = QFileDialog.getExistingDirectory(
+                dialog,
+                "Choose Default RF Bridge Storage Location",
+                storage_edit.text() or self.settings.default_storage_root(),
+            )
+            if selected:
+                storage_edit.setText(selected)
+
+        browse_button.clicked.connect(choose_folder)
+
+        form.addRow("Appearance", appearance_combo)
+        form.addRow("Default refresh", refresh_combo)
+        form.addRow("Default storage", storage_row)
+
+        note = QLabel("Storage changes apply to new app sessions. Current scan output stays where this session started.")
+        note.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        layout.addLayout(form)
+        layout.addWidget(note)
+        layout.addWidget(buttons)
+        dialog.setStyleSheet(self.stylesheet())
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        self.appearance = appearance_combo.currentText()
+        self.settings.set_appearance(self.appearance)
+        self.settings.set_storage_root(storage_edit.text().strip() or self.settings.default_storage_root())
+        self.set_refresh_interval(float(refresh_combo.currentData()))
+        self.apply_theme()
+        self.log(f"Preferences saved: appearance={self.appearance}, storage={self.settings.get_storage_root()}")
 
     def log(self, message):
         self.log_box.append(f"[{time_12h()}] {message}")
@@ -380,7 +542,7 @@ class RFBridgeWindow:
 
     def update_connection_state(self, connected, text=None):
         self.connected = connected
-        self.status_dot.setStyleSheet(f"color: {'#33cc77' if connected else '#aa3333'};")
+        self.status_dot.setStyleSheet(f"color: {self.theme['connected'] if connected else self.theme['disconnected']};")
         self.connection_status.setText(text or ("Connected" if connected else "Disconnected"))
         self.connect_button.setEnabled(not connected)
         self.disconnect_button.setEnabled(connected or self.worker is not None)
@@ -497,7 +659,7 @@ class RFBridgeWindow:
                 self.peak_curve.setData(self.freqs_mhz, self.peak_hold)
         self.live_curve.setData(self.freqs_mhz, dbm)
         self.update_top_frequencies(dbm)
-        self.plot.setTitle(f"RF Bridge - {self.gig_slug} - {time_12h()}", color="#eeeeee", size="16pt")
+        self.plot.setTitle(f"RF Bridge - {self.gig_slug} - {time_12h()}", color=self.theme["text"], size="16pt")
 
     def update_top_frequencies(self, dbm):
         median_floor = sorted(dbm)[len(dbm) // 2]
@@ -513,7 +675,7 @@ class RFBridgeWindow:
             self.plot.removeItem(marker)
         self.top_markers = []
         for freq, level in strongest:
-            marker = self.pg.InfiniteLine(pos=freq, angle=90, pen=self.pg.mkPen("#666666", width=1, style=self.Qt.DotLine))
+            marker = self.pg.InfiniteLine(pos=freq, angle=90, pen=self.pg.mkPen(self.theme["marker"], width=1, style=self.Qt.DotLine))
             marker.setZValue(-10)
             self.plot.addItem(marker)
             self.top_markers.append(marker)

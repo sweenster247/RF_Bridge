@@ -60,13 +60,13 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='RF Bridge.app',
-    icon=None,
+    icon='assets/rf-bridge.icns',
     bundle_identifier='org.rfbridge.app',
     info_plist={
         'CFBundleDisplayName': 'RF Bridge',
         'CFBundleName': 'RF Bridge',
-        'CFBundleShortVersionString': '1.6.2',
-        'CFBundleVersion': '1.6.2',
+        'CFBundleShortVersionString': '1.7.0',
+        'CFBundleVersion': '1.7.0',
         'NSHighResolutionCapable': True,
     },
 )

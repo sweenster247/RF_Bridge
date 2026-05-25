@@ -126,7 +126,7 @@ imported by:
 
 <div class="node">
   <a name="rf-bridge.py"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf-bridge.py" type="text/plain"><tt>rf-bridge.py</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf-bridge.py" type="text/plain"><tt>rf-bridge.py</tt></a>
 <span class="moduletype">Script</span>  <div class="import">
 imports:
     <a href="#PySide6">PySide6</a>
@@ -3995,6 +3995,7 @@ imported by:
  &#8226;   <a href="#matplotlib.backends.qt_compat">matplotlib.backends.qt_compat</a>
  &#8226;   <a href="#pyqtgraph.Qt">pyqtgraph.Qt</a>
  &#8226;   <a href="#rf-bridge.py">rf-bridge.py</a>
+ &#8226;   <a href="#rf_bridge.ui">rf_bridge.ui</a>
 
   </div>
 
@@ -26557,6 +26558,7 @@ imported by:
  &#8226;   <a href="#rf-bridge.py">rf-bridge.py</a>
  &#8226;   <a href="#rf_bridge.app">rf_bridge.app</a>
  &#8226;   <a href="#rf_bridge.export">rf_bridge.export</a>
+ &#8226;   <a href="#rf_bridge.settings">rf_bridge.settings</a>
  &#8226;   <a href="#rf_bridge.ui">rf_bridge.ui</a>
  &#8226;   <a href="#runpy">runpy</a>
  &#8226;   <a href="#serial">serial</a>
@@ -37564,7 +37566,7 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/__init__.py" type="text/plain"><tt>rf_bridge</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/__init__.py" type="text/plain"><tt>rf_bridge</tt></a>
 <span class="moduletype">Package</span>  <div class="import">
 imported by:
     <a href="#rf_bridge.app">rf_bridge.app</a>
@@ -37583,7 +37585,7 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.app"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/app.py" type="text/plain"><tt>rf_bridge.app</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/app.py" type="text/plain"><tt>rf_bridge.app</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#PySide6.QtWidgets">PySide6.QtWidgets</a>
@@ -37592,6 +37594,7 @@ imports:
  &#8226;   <a href="#rf_bridge">rf_bridge</a>
  &#8226;   <a href="#rf_bridge.config">rf_bridge.config</a>
  &#8226;   <a href="#rf_bridge.scanner">rf_bridge.scanner</a>
+ &#8226;   <a href="#rf_bridge.settings">rf_bridge.settings</a>
  &#8226;   <a href="#rf_bridge.tinysa">rf_bridge.tinysa</a>
  &#8226;   <a href="#rf_bridge.ui">rf_bridge.ui</a>
  &#8226;   <a href="#rf_bridge.utils">rf_bridge.utils</a>
@@ -37610,7 +37613,7 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.config"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/config.py" type="text/plain"><tt>rf_bridge.config</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/config.py" type="text/plain"><tt>rf_bridge.config</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#rf_bridge">rf_bridge</a>
@@ -37630,7 +37633,7 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.export"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/export.py" type="text/plain"><tt>rf_bridge.export</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/export.py" type="text/plain"><tt>rf_bridge.export</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#csv">csv</a>
@@ -37651,7 +37654,7 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.scanner"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/scanner.py" type="text/plain"><tt>rf_bridge.scanner</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/scanner.py" type="text/plain"><tt>rf_bridge.scanner</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#rf_bridge">rf_bridge</a>
@@ -37673,16 +37676,18 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.settings"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/settings.py" type="text/plain"><tt>rf_bridge.settings</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/settings.py" type="text/plain"><tt>rf_bridge.settings</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#PySide6.QtCore">PySide6.QtCore</a>
+ &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#rf_bridge">rf_bridge</a>
 
   </div>
   <div class="import">
 imported by:
-    <a href="#rf_bridge.ui">rf_bridge.ui</a>
+    <a href="#rf_bridge.app">rf_bridge.app</a>
+ &#8226;   <a href="#rf_bridge.ui">rf_bridge.ui</a>
 
   </div>
 
@@ -37690,7 +37695,7 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.tinysa"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/tinysa.py" type="text/plain"><tt>rf_bridge.tinysa</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/tinysa.py" type="text/plain"><tt>rf_bridge.tinysa</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#rf_bridge">rf_bridge</a>
@@ -37714,10 +37719,11 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.ui"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/ui.py" type="text/plain"><tt>rf_bridge.ui</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/ui.py" type="text/plain"><tt>rf_bridge.ui</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#PySide6.QtCore">PySide6.QtCore</a>
+ &#8226;   <a href="#PySide6.QtGui">PySide6.QtGui</a>
  &#8226;   <a href="#PySide6.QtWidgets">PySide6.QtWidgets</a>
  &#8226;   <a href="#bisect">bisect</a>
  &#8226;   <a href="#os">os</a>
@@ -37742,7 +37748,7 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.utils"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/utils.py" type="text/plain"><tt>rf_bridge.utils</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/utils.py" type="text/plain"><tt>rf_bridge.utils</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#datetime">datetime</a>
@@ -37762,7 +37768,7 @@ imported by:
 
 <div class="node">
   <a name="rf_bridge.worker"></a>
-  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.6.2/rf_bridge/worker.py" type="text/plain"><tt>rf_bridge.worker</tt></a>
+  <a target="code" href="/Users/codysweeny/Downloads/rf-bridge-v1.7/rf_bridge/worker.py" type="text/plain"><tt>rf_bridge.worker</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#PySide6.QtCore">PySide6.QtCore</a>

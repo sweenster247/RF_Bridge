@@ -1,20 +1,24 @@
-# RF Bridge v1.6.2
+# RF Bridge v1.7
 
 RF Bridge connects a tinySA to a Wireless Workbench-friendly CSV workflow with a live desktop RF display.
 
-v1.6.2 builds on the first packaged-app milestone. It keeps the stable v1.5.1 threaded PySide6/pyqtgraph UI and adds a proper macOS app launch path so RF Bridge can be built as `RF Bridge.app` with PyInstaller.
+v1.7 focuses on polish and distribution: app preferences, light/dark appearance support, a proper app icon asset, and DMG build prep.
 
-## What changed in v1.6
+## Highlights
 
-- Added packaged-app launch mode for macOS builds
-- Double-clicked app bundles now launch the desktop UI by default
-- Added GUI gig/session name prompt for app launches
-- Added `--app` mode for testing the packaged-app flow from Terminal
-- Added `--gig` argument for launching without an interactive prompt
-- Added `--output-dir` override for custom scan locations
-- Improved PyInstaller spec for PySide6, pyqtgraph, and pyserial bundling
-- Updated build script for one-command app bundle creation
-- Bumped internal package version to `1.6.0`
+- PySide6 + pyqtgraph desktop UI
+- tinySA auto-detection and manual port selection
+- Connect / Disconnect / Refresh Ports controls
+- Live RF graph with peak hold modes
+- Freeze Trace mode for inspecting a scan without stopping capture
+- WWB-compatible CSV export
+- `latest_scan.csv` live updating
+- Persistent settings using `QSettings`
+- Preferences window for appearance, default refresh, and default storage folder
+- Dark / Light / System appearance options
+- App icon source assets and macOS `.icns` generation script
+- PyInstaller `.app` build script
+- DMG build script using `create-dmg`
 
 ## Install dependencies for source use
 
@@ -66,71 +70,25 @@ Headless CSV capture still works:
 python3 rf-bridge.py
 ```
 
-## Build the macOS app bundle
+## Preferences
 
-From the project root on macOS:
-
-```bash
-./build_app.sh
-```
-
-The unsigned app bundle should be created at:
+Open:
 
 ```text
-dist/RF Bridge.app
+RF Bridge > Preferences…
 ```
 
-First launch on macOS may require:
+Preferences currently supports:
 
-```text
-Right-click RF Bridge.app > Open > Open
-```
+- Appearance: `System`, `Dark`, or `Light`
+- Default refresh interval
+- Default storage folder for future app sessions
 
-That is expected for an unsigned local build.
+Storage changes apply to new app sessions. The current scan session keeps writing to the folder selected at launch.
 
-## Recommended clean build workflow
+## Packaged app launch flow
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
-./build_app.sh
-```
-
-## Project layout
-
-```text
-rf_bridge/config.py    shared defaults
-rf_bridge/utils.py     time, safe names, number parsing
-rf_bridge/tinysa.py    serial discovery and tinySA command helpers
-rf_bridge/export.py    WWB CSV export and latest_scan.csv handling
-rf_bridge/scanner.py   scan validation and headless scan loop
-rf_bridge/worker.py    threaded tinySA scan worker for the UI
-rf_bridge/settings.py  persistent PySide6/QSettings helpers
-rf_bridge/ui.py        PySide6 + pyqtgraph UI
-rf_bridge/app.py       command-line and packaged-app startup
-rf-bridge.py           compatibility launcher
-rf-bridge.spec         PyInstaller app bundle spec
-build_app.sh           macOS app build helper
-```
-
-## v1.5.1 stability retained
-
-- Background threaded scan worker
-- tinySA connection panel
-- Port refresh, connect, and disconnect controls
-- Device status, version, and sweep range display
-- In-app event log pane
-- Freeze Trace mode
-- Persistent settings using `QSettings`
-- WWB-compatible CSV export
-- `latest_scan.csv` live updating
-- Headless CSV capture mode
-- Qt thread-safety fix from v1.5.1
-
-## v1.6.2 App Launch Polish
-
-When launched as a packaged macOS app, RF Bridge now prompts in this order:
+When launched as a packaged macOS app, RF Bridge prompts in this order:
 
 ```text
 1. Gig/session name
@@ -158,28 +116,97 @@ For example, accepting the default storage location with a gig named `Blues Fest
 ~/Documents/RF Bridge/wwb_scans/blues_fest
 ```
 
-## Notes
+## Build the macOS app bundle
 
-v1.6.2 does not include Apple code signing or notarization. That can come later after the app bundle flow is stable.
-
-
-## v1.6.1 App Launch Fix
-
-If you are building the macOS `.app`, use v1.6.1 or newer. This patch defers tinySA auto-detection until after the main window is visible, which prevents the packaged app from appearing to disappear after the gig/session prompt.
-
-Packaged app scans are saved by default to:
-
-```text
-~/Documents/RF Bridge/wwb_scans/<gig>
-```
-
-The script workflow is unchanged:
+From the project root on macOS:
 
 ```bash
-python3 rf-bridge.py --ui
+./build_app.sh
 ```
 
+The unsigned app bundle should be created at:
 
-## v1.6.2 App Prompt Update
+```text
+dist/RF Bridge.app
+```
 
-Use v1.6.2 or newer if you want the packaged app to ask for both gig/session name and scan storage location at launch. The Terminal/script workflow remains unchanged.
+First launch on macOS may require:
+
+```text
+Right-click RF Bridge.app > Open > Open
+```
+
+That is expected for an unsigned local build.
+
+## Build the DMG
+
+Install `create-dmg`:
+
+```bash
+brew install create-dmg
+```
+
+Build the app, then build the DMG:
+
+```bash
+./build_app.sh
+./build_dmg.sh
+```
+
+The DMG should be created at:
+
+```text
+dist/RF-Bridge-v1.7-macOS.dmg
+```
+
+## App icon
+
+v1.7 includes:
+
+```text
+assets/rf-bridge-icon-1024.png
+assets/rf-bridge-icon.svg
+scripts/create_icon.sh
+```
+
+`build_app.sh` automatically creates:
+
+```text
+assets/rf-bridge.icns
+```
+
+on macOS if it does not already exist.
+
+## Recommended clean build workflow
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+./build_app.sh
+./build_dmg.sh
+```
+
+## Project layout
+
+```text
+rf_bridge/config.py       shared defaults
+rf_bridge/utils.py        time, safe names, number parsing
+rf_bridge/tinysa.py       serial discovery and tinySA command helpers
+rf_bridge/export.py       WWB CSV export and latest_scan.csv handling
+rf_bridge/scanner.py      scan validation and headless scan loop
+rf_bridge/worker.py       threaded tinySA scan worker for the UI
+rf_bridge/settings.py     persistent PySide6/QSettings helpers
+rf_bridge/ui.py           PySide6 + pyqtgraph UI
+rf_bridge/app.py          command-line and packaged-app startup
+rf-bridge.py              compatibility launcher
+rf-bridge.spec            PyInstaller app bundle spec
+build_app.sh              macOS app build helper
+build_dmg.sh              macOS DMG build helper
+scripts/create_icon.sh    macOS icon generation helper
+assets/                   app icon source assets
+```
+
+## Notes
+
+v1.7 does not include Apple code signing or notarization. That can come later after the app bundle and DMG flow are stable.

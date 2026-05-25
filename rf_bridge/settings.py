@@ -1,5 +1,6 @@
 """Persistent UI settings for RF Bridge."""
 
+import os
 from PySide6.QtCore import QSettings
 
 
@@ -13,6 +14,14 @@ class AppSettings:
     def set(self, key, value):
         self.settings.setValue(key, value)
 
+    def get_bool(self, key, default=False):
+        value = self.get(key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
     def get_float(self, key, default):
         value = self.get(key, default)
         try:
@@ -22,3 +31,18 @@ class AppSettings:
 
     def get_bytes(self, key):
         return self.get(key, None)
+
+    def default_storage_root(self):
+        return os.path.join(os.path.expanduser("~"), "Documents", "RF Bridge")
+
+    def get_storage_root(self):
+        return self.get("storage_root", self.default_storage_root())
+
+    def set_storage_root(self, path):
+        self.set("storage_root", path)
+
+    def get_appearance(self):
+        return str(self.get("appearance", "Dark"))
+
+    def set_appearance(self, appearance):
+        self.set("appearance", appearance)

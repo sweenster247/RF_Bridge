@@ -15,6 +15,7 @@ from .tinysa import (
     find_tinysa_port,
     send_command,
 )
+from .settings import AppSettings
 from .ui import run_ui
 from .utils import safe_name
 
@@ -133,7 +134,9 @@ def prompt_storage_root_gui(default_root=None):
         default_root,
     )
 
-    return selected or default_root
+    selected = selected or default_root
+    AppSettings().set_storage_root(selected)
+    return selected
 
 
 def resolve_gig_name(args, use_app_mode):
@@ -151,7 +154,8 @@ def resolve_output_dir(args, gig_slug, use_app_mode=False):
         return args.output_dir
 
     if use_app_mode:
-        storage_root = prompt_storage_root_gui(default_app_storage_root())
+        settings = AppSettings()
+        storage_root = prompt_storage_root_gui(settings.get_storage_root())
         return os.path.join(
             storage_root,
             "wwb_scans",

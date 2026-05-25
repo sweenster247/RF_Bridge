@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#0e1218"/>
+      <stop offset="1" stop-color="#14202c"/>
+    </linearGradient>
+  </defs>
+  <rect x="82" y="72" width="860" height="860" rx="190" fill="url(#bg)" stroke="#00ff99" stroke-opacity="0.35" stroke-width="8"/>
+  <path d="M220 620h584" stroke="#00ff99" stroke-width="28" stroke-linecap="round"/>
+  <path d="M225 620c78-205 494-205 572 0" fill="none" stroke="#00ff99" stroke-width="18" stroke-linecap="round" opacity="0.85"/>
+  <path d="M325 620c54-120 320-120 374 0" fill="none" stroke="#00ff99" stroke-width="12" stroke-linecap="round" opacity="0.65"/>
+  <g stroke="#00ff99" stroke-width="10" opacity="0.55"><path d="M300 620v100"/><path d="M410 620v100"/><path d="M512 620v100"/><path d="M614 620v100"/><path d="M724 620v100"/></g>
+  <path d="M190 392c36 10 72 35 108 0s72-105 108-30 72 70 108 0 72-130 108-20 72 72 108 15 72-95 108-22" fill="none" stroke="#00ff99" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="none" stroke="#00beff" opacity="0.7"><circle cx="512" cy="500" r="70" stroke-width="8"/><circle cx="512" cy="500" r="125" stroke-width="8" opacity="0.6"/><circle cx="512" cy="500" r="180" stroke-width="8" opacity="0.35"/></g>
+  <circle cx="512" cy="500" r="26" fill="#00beff"/>
+  <text x="344" y="828" fill="#ebfff8" font-family="Arial, sans-serif" font-weight="700" font-size="92">RF</text>
+  <text x="470" y="828" fill="#ebfff8" opacity="0.84" font-family="Arial, sans-serif" font-weight="700" font-size="54">Bridge</text>
+</svg>
