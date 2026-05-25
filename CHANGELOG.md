@@ -1,26 +1,5 @@
 # Changelog
 
-## v1.5.1
-- Fixed Qt thread-safety issue in the PySide6 UI
-- Routed worker-thread updates through Qt signals/queued UI calls
-- Prevented UI log updates from running directly inside the scan worker thread
-- Improved refresh/disconnect/shutdown behavior across thread boundaries
-- Resolved repeated `QBasicTimer::start: Timers cannot be started from another thread` warnings
-- Resolved crash risk from `QObject: Cannot create children for a parent that is in a different thread`
-- Preserved v1.5 connection panel, threaded scanning, Freeze Trace, persistent settings, and packaging prep
-
-## v1.5
-- Moved PySide6 UI scanning into a background QThread
-- Added tinySA connection panel with port dropdown
-- Added Refresh Ports, Connect, and Disconnect controls
-- Added device status, version, and sweep range display
-- Added in-app event log pane
-- Added Freeze Trace mode for inspecting RF activity without stopping scans
-- Added persistent UI settings with QSettings
-- Preserved headless CSV capture mode
-- Preserved WWB CSV export and latest_scan.csv behavior
-- Added PyInstaller packaging prep for future macOS app builds
-
 ## v1.4
 - Replaced Matplotlib UI with PySide6 application window
 - Replaced Matplotlib plotting with pyqtgraph

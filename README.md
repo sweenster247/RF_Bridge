@@ -1,98 +1,263 @@
-# RF Bridge v1.5.1
+# RF Bridge
 
-RF Bridge connects a tinySA to a Wireless Workbench-friendly CSV workflow with a live desktop RF display.
+RF Bridge is a lightweight Python utility that connects a tinySA spectrum analyzer to Shure Wireless Workbench (WWB) by exporting live RF scans as WWB-compatible CSV files.
 
-v1.5.1 is a patch release for the v1.5 operational-readiness build. It keeps the new PySide6/pyqtgraph app workflow and fixes a Qt thread-safety issue that could cause timer warnings and UI crashes after launch.
+Designed for live sound engineers, RF coordinators, churches, theaters, and festival workflows that want fast RF visibility without expensive proprietary hardware.
 
-## Install dependencies
+---
+
+## Features
+
+* Live RF scanning from tinySA
+
+* WWB-compatible CSV exports
+
+* Real-time matplotlib RF visualization UI
+
+* Automatic tinySA detection
+
+* Manual serial port override support
+
+* Live adjustable refresh rate controls
+
+* Peak hold modes
+
+  * OFF
+  * LATCH
+  * 1 minute
+  * 5 minute
+  * 15 minute
+
+* Top 8 RF hit summary panel
+
+* Bottom status bar with live session information
+
+* Automatic scan saving
+
+* Headless mode support for unattended scanning
+
+---
+
+# Requirements
+
+## Hardware
+
+* tinySA or tinySA Ultra
+* USB cable
+* Mac, Linux, or Windows system with Python 3
+
+---
+
+# macOS Setup
+
+## 1. Install Python 3
+
+Modern macOS versions usually include Python, but installing the latest version is recommended.
+
+Install from:
+
+[Python Downloads](https://www.python.org/downloads/?utm_source=chatgpt.com)
+
+Verify installation:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3 --version
 ```
 
-## Run
+---
 
-Start the desktop UI:
+## 2. Install Dependencies
+
+Install required Python packages:
+
+```bash
+pip3 install pyserial matplotlib
+```
+
+---
+
+# Usage
+
+## Start with UI
 
 ```bash
 python3 rf-bridge.py --ui
 ```
 
-Manual port:
+You will be prompted for a gig name.
 
-```bash
-python3 rf-bridge.py --ui --port /dev/cu.usbmodem4001
+Example:
+
+```text
+Gig name: Blues Fest
 ```
 
-List ports:
+---
 
-```bash
-python3 rf-bridge.py --list-ports
-```
+## Headless Mode
 
-Set initial refresh interval:
-
-```bash
-python3 rf-bridge.py --ui --refresh 1
-```
-
-Headless CSV capture still works:
+Run without the live graph UI:
 
 ```bash
 python3 rf-bridge.py
 ```
 
-## v1.5.1 patch fix
+---
 
-- Fixed Qt thread-safety issue in the PySide6 UI
-- Routed worker-thread updates through Qt signals/queued UI calls
-- Prevented log updates from touching UI widgets from the scan worker thread
-- Prevented refresh/disconnect/shutdown behavior from crossing thread boundaries unsafely
-- Resolved `QBasicTimer::start: Timers cannot be started from another thread`
-- Resolved crash risk from `QObject: Cannot create children for a parent that is in a different thread`
+# Automatic tinySA Detection
 
-## v1.5 features retained
+RF Bridge automatically scans serial devices and selects the first device identified as a tinySA.
 
-- Background threaded scan worker
-- tinySA connection panel
-- Port refresh, connect, and disconnect controls
-- Device status, version, and sweep range display
-- In-app event log pane
-- Freeze Trace mode
-- Persistent settings using `QSettings`
-- WWB-compatible CSV export
-- `latest_scan.csv` live updating
-- Headless CSV capture mode
-- PyInstaller packaging prep
-
-## Project layout
+Example:
 
 ```text
-rf_bridge/config.py    shared defaults
-rf_bridge/utils.py     time, safe names, number parsing
-rf_bridge/tinysa.py    serial discovery and tinySA command helpers
-rf_bridge/export.py    WWB CSV export and latest_scan.csv handling
-rf_bridge/scanner.py   scan validation and headless scan loop
-rf_bridge/worker.py    threaded tinySA scan worker for the UI
-rf_bridge/settings.py  persistent PySide6/QSettings helpers
-rf_bridge/ui.py        PySide6 + pyqtgraph UI
-rf_bridge/app.py       command-line app startup
-rf-bridge.py           compatibility launcher
+Auto-detected tinySA:
+  /dev/cu.usbmodem4001
 ```
 
-## Build macOS app bundle
-
-A basic PyInstaller spec and shell helper are included:
+No more:
 
 ```bash
-python3 -m pip install pyinstaller
-./build_app.sh
+ls /dev/tty.*
 ```
 
-The unsigned app bundle should land in:
+Like civilized people.
+
+---
+
+# Manual Port Override
+
+If automatic detection fails:
+
+```bash
+python3 rf-bridge.py --port /dev/cu.usbmodem4001 --ui
+```
+
+---
+
+# List Serial Ports
+
+```bash
+python3 rf-bridge.py --list-ports
+```
+
+Example:
 
 ```text
-dist/RF Bridge.app
+Detected serial ports:
+  - /dev/cu.usbmodem4001 — tinySA4 — tinysa.org
 ```
 
-Signing and notarization are not included yet.
+---
+
+# Live Refresh Controls
+
+The UI now supports adjustable live refresh intervals directly from the application.
+
+Available refresh modes:
+
+* 0.5s
+* 1s
+* 2s
+* 5s
+* 10s
+
+You can also define the initial refresh interval from the command line:
+
+```bash
+python3 rf-bridge.py --ui --refresh 1
+```
+
+Changing the refresh rate only affects UI responsiveness and live graph updates.
+
+CSV export timing remains independent.
+
+---
+
+# UI Features
+
+## Wide Layout Interface
+
+RF Bridge v1.2 introduces a cleaner wide-screen UI layout optimized for live operation.
+
+### Includes
+
+* Expanded spectrum display
+* Cleaner right-side control panel
+* Improved Top 8 RF hit readability
+* Persistent bottom status bar
+* Reduced UI clutter
+* Better spacing and visual hierarchy
+
+---
+
+# Output Files
+
+Scans are automatically written to:
+
+```text
+wwb_scans/<gig_name>/
+```
+
+Example:
+
+```text
+wwb_scans/blues_fest/
+```
+
+Each scan produces:
+
+* timestamped historical CSV
+* latest_scan.csv
+
+---
+
+# WWB Import
+
+Inside Wireless Workbench:
+
+1. Open Frequency Coordination
+2. Import scan data
+3. Select `latest_scan.csv`
+
+---
+
+# Notes
+
+* tinySA sweep range must already be configured on the device
+* RF Bridge does not currently configure sweep ranges remotely
+* `/dev/cu.*` devices are preferred automatically on macOS
+* If another serial monitor is open, the port may appear busy
+* Large sweep ranges may reduce UI responsiveness at very fast refresh intervals
+
+---
+
+# Known Issues
+
+* macOS may briefly lock the serial port after reconnecting the tinySA
+* Extremely large sweep ranges may reduce UI responsiveness
+* WWB import formatting may vary slightly between WWB versions
+* matplotlib layouts are semi-responsive but not fully adaptive
+
+---
+
+# Planned Features
+
+* Native WWB integration
+* Scan averaging
+* Waterfall display
+* Occupancy analysis
+* Native packaged macOS app
+* Multi-device scanning
+* Responsive application framework
+* Native installers
+
+---
+
+# License
+
+MIT License
+
+---
+
+Built for live sound engineers, RF coordinators, and anyone tired of everything being a subscription these days.

@@ -85,20 +85,6 @@ def main(argv=None):
         exist_ok=True
     )
 
-    if args.ui:
-        print(f"Output folder: {output_dir}")
-        print(f"Scan interval: {SCAN_INTERVAL_SECONDS} seconds")
-        print(f"UI refresh: {args.refresh} seconds")
-        print("UI enabled: True")
-
-        run_ui(
-            output_dir=output_dir,
-            gig_slug=gig_slug,
-            ui_update_seconds=args.refresh,
-            selected_port=args.port,
-        )
-        return
-
     if args.port:
         selected_port = args.port
         version_output = None
@@ -130,18 +116,53 @@ def main(argv=None):
 
         freqs_mhz = read_frequencies_mhz(ser)
 
-        print(f"Serial port: {selected_port}")
-        print(f"Output folder: {output_dir}")
-        print(f"Scan interval: {SCAN_INTERVAL_SECONDS} seconds")
-        print(f"Frequency range: {min(freqs_mhz):.3f} MHz - {max(freqs_mhz):.3f} MHz")
-        print("UI enabled: False")
-
-        run_headless(
-            ser,
-            output_dir,
-            gig_slug,
-            freqs_mhz
+        print(
+            f"Serial port: "
+            f"{selected_port}"
         )
+
+        print(
+            f"Output folder: "
+            f"{output_dir}"
+        )
+
+        print(
+            f"Scan interval: "
+            f"{SCAN_INTERVAL_SECONDS} seconds"
+        )
+
+        print(
+            f"UI refresh: "
+            f"{args.refresh} seconds"
+        )
+
+        print(
+            f"Frequency range: "
+            f"{min(freqs_mhz):.3f} MHz - "
+            f"{max(freqs_mhz):.3f} MHz"
+        )
+
+        print(
+            f"UI enabled: "
+            f"{args.ui}"
+        )
+
+        if args.ui:
+            run_ui(
+                ser,
+                output_dir,
+                gig_slug,
+                freqs_mhz,
+                args.refresh,
+                selected_port
+            )
+        else:
+            run_headless(
+                ser,
+                output_dir,
+                gig_slug,
+                freqs_mhz
+            )
 
 
 if __name__ == "__main__":
