@@ -1,4 +1,7 @@
 # RF Bridge v1.9.1
+<p align="center">
+  <img src="https://github.com/sweenster247/RF_Bridge/blob/main/assets/%20Logo.png" width="650" alt="RF Bridge Logo">
+</p>
 
 RF Bridge connects a tinySA to a Wireless Workbench-friendly CSV workflow with a live desktop RF display.
 
