@@ -1,6 +1,6 @@
-# RF Bridge v1.9.2 — Build Pipeline and Icon Update
+# RF Bridge v1.9.3 — Build Pipeline and Icon Update
 
-RF Bridge v1.9.2 is a packaging and polish update focused on release consistency and app branding.
+RF Bridge v1.9.3 is a packaging and polish update focused on release consistency and app branding.
 
 ## Added
 
@@ -30,8 +30,8 @@ RF-Bridge-v{version}-macOS-arm64.zip
 For this release:
 
 ```text
-RF-Bridge-v1.9.2-macOS-arm64.dmg
-RF-Bridge-v1.9.2-macOS-arm64.zip
+RF-Bridge-v1.9.3-macOS-arm64.dmg
+RF-Bridge-v1.9.3-macOS-arm64.zip
 ```
 
 ### Updated App Icon Source
@@ -44,7 +44,7 @@ RF-Bridge-v1.9.2-macOS-arm64.zip
 
 - Updated `build_app.sh` to read the app version from `rf_bridge/version.py`
 - Updated `build_dmg.sh` to output versioned arm64 release artifacts
-- Updated PyInstaller bundle metadata to v1.9.2
+- Updated PyInstaller bundle metadata to v1.9.3
 - Updated README with the preferred RF Bridge logo header and release build workflow
 
 ## Retained

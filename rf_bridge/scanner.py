@@ -17,6 +17,12 @@ def validate_frequency_list(freqs_mhz):
 
 
 def read_frequencies_mhz(ser):
+    """Read the tinySA frequency table using the proven v1.8 path.
+
+    v1.9.4.x added retries/fallback sweep probing around startup. On some
+    tinySA units that made the serial console less reliable. This intentionally
+    restores the simple command flow that was known-good in v1.8/v1.9.2.
+    """
     freqs_hz = parse_numbers(
         send_command(
             ser,
@@ -35,9 +41,14 @@ def read_frequencies_mhz(ser):
 
 
 def read_scan_dbm(ser):
-    return parse_numbers(
+    values = parse_numbers(
         send_command(ser, "data 1")
     )
+
+    if not values:
+        raise RuntimeError("The tinySA returned no scan data.")
+
+    return values
 
 
 def run_headless(ser, output_dir, gig_slug, freqs_mhz):

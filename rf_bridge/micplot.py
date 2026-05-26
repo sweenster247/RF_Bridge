@@ -6,10 +6,18 @@ DEFAULT_MARKER_COLOR = "#00ff99"
 MARKER_COLORS = [
     ("Green", "#00ff99"),
     ("Blue", "#33aaff"),
+    ("Cyan", "#00e5ff"),
     ("Yellow", "#ffaa00"),
+    ("Orange", "#ff7a00"),
     ("Red", "#ff3333"),
+    ("Magenta", "#ff33cc"),
     ("Purple", "#cc66ff"),
+    ("Violet", "#b388ff"),
+    ("Lime", "#7cff00"),
+    ("Teal", "#00c7a8"),
+    ("Pink", "#ff8ad8"),
     ("White", "#eeeeee"),
+    ("Gray", "#a0a0a0"),
 ]
 
 

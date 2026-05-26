@@ -1,8 +1,10 @@
-"""PySide6 / pyqtgraph RF Bridge v1.9.2 UI."""
+"""PySide6 / pyqtgraph RF Bridge v1.9.4.5 UI."""
 
 import bisect
+import json
 import os
 import time
+import webbrowser
 
 from .capture import load_capture_csv
 from .micplot import MARKER_COLORS, DEFAULT_MARKER_COLOR, load_markers, save_markers
@@ -12,6 +14,7 @@ from .settings import AppSettings
 from .tinysa import candidate_serial_ports, describe_port, find_tinysa_port
 from .utils import time_12h
 from .worker import ScanWorker
+from .version import __version__
 
 
 REFRESH_MODES = [0.5, 1, 2, 5, 10]
@@ -105,6 +108,7 @@ class RFBridgeWindow:
         from PySide6.QtGui import QAction
         from PySide6.QtWidgets import (
             QApplication,
+            QCheckBox,
             QComboBox,
             QFrame,
             QGridLayout,
@@ -148,6 +152,15 @@ class RFBridgeWindow:
         self.frozen = False
         self.loaded_capture = None
         self.capture_mode = False
+        self.capture_overlays = []
+        self.capture_overlay_items = []
+        self.capture_overlay_actions = []
+        self.overlay_checkbox_widgets = []
+        self.overlay_color_index = 0
+        self.scan_error_count = 0
+        self.auto_connect_in_progress = False
+        self.shutting_down = False
+        self.shutdown_started = False
         self.live_freqs_mhz = []
         self.connected = False
         self.worker_thread = None
@@ -173,7 +186,12 @@ class RFBridgeWindow:
         self.selected_port = selected_port or self.settings.get("last_port", None)
 
         self.app = QApplication.instance() or QApplication([])
+        # Re-enable normal desktop-app behavior now that a real main window
+        # exists. Startup dialogs temporarily disable this in app.py.
+        self.app.setQuitOnLastWindowClosed(True)
         self.window = QMainWindow()
+        self.window.closeEvent = self.handle_close_event
+        self.app.aboutToQuit.connect(self.shutdown)
         self.window.setWindowTitle("RF Bridge")
         self.window.resize(1580, 920)
 
@@ -205,16 +223,51 @@ class RFBridgeWindow:
         self.version_label = QLabel("Device: —")
         self.range_label = QLabel("Range: —")
 
+        self.port_combo.setMinimumWidth(260)
+        self.port_combo.setMaximumWidth(420)
+
         connection_layout.addWidget(self.status_dot, 0, 0)
-        connection_layout.addWidget(self.connection_status, 0, 1)
-        connection_layout.addWidget(QLabel("tinySA Port"), 0, 2)
-        connection_layout.addWidget(self.port_combo, 0, 3)
-        connection_layout.addWidget(self.refresh_ports_button, 0, 4)
-        connection_layout.addWidget(self.connect_button, 0, 5)
-        connection_layout.addWidget(self.disconnect_button, 0, 6)
-        connection_layout.addWidget(self.version_label, 1, 3, 1, 2)
-        connection_layout.addWidget(self.range_label, 1, 5, 1, 2)
-        connection_layout.setColumnStretch(3, 1)
+        connection_layout.addWidget(self.connection_status, 0, 1, 1, 2)
+        connection_layout.addWidget(QLabel("Port"), 1, 0, 1, 1)
+        connection_layout.addWidget(self.port_combo, 1, 1, 1, 4)
+        connection_layout.addWidget(self.refresh_ports_button, 2, 0, 1, 2)
+        connection_layout.addWidget(self.connect_button, 2, 2)
+        connection_layout.addWidget(self.disconnect_button, 2, 3, 1, 2)
+        connection_layout.addWidget(self.version_label, 3, 0, 1, 5)
+        connection_layout.addWidget(self.range_label, 4, 0, 1, 5)
+        connection_layout.setColumnStretch(1, 1)
+        connection_panel.setMaximumWidth(520)
+
+        self.overlay_panel = QFrame()
+        self.overlay_panel.setObjectName("overlayPanel")
+        overlay_layout = QVBoxLayout(self.overlay_panel)
+        overlay_layout.setContentsMargins(14, 12, 14, 12)
+        overlay_layout.setSpacing(8)
+
+        overlay_header = QHBoxLayout()
+        self.overlay_title = QLabel("CAPTURE OVERLAYS")
+        self.overlay_title.setObjectName("overlayTitle")
+        self.open_overlay_button = QPushButton("Open Overlay(s)…")
+        self.clear_overlay_button = QPushButton("Clear")
+        overlay_header.addWidget(self.overlay_title)
+        overlay_header.addStretch(1)
+        overlay_header.addWidget(self.open_overlay_button)
+        overlay_header.addWidget(self.clear_overlay_button)
+
+        self.overlay_controls_row = QHBoxLayout()
+        self.overlay_controls_row.setSpacing(10)
+        self.overlay_empty_label = QLabel("No overlays loaded")
+        self.overlay_empty_label.setObjectName("overlayEmptyLabel")
+        self.overlay_controls_row.addWidget(self.overlay_empty_label)
+        self.overlay_controls_row.addStretch(1)
+
+        overlay_layout.addLayout(overlay_header)
+        overlay_layout.addLayout(self.overlay_controls_row)
+
+        top_layout = QHBoxLayout()
+        top_layout.setSpacing(12)
+        top_layout.addWidget(connection_panel, stretch=0)
+        top_layout.addWidget(self.overlay_panel, stretch=1)
 
         content_layout = QHBoxLayout()
         content_layout.setSpacing(18)
@@ -228,6 +281,7 @@ class RFBridgeWindow:
         self.plot.setLabel("left", "Amplitude", units="dBm")
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
         self.plot.setYRange(-110, -20, padding=0)
+        self.plot.disableAutoRange()
 
         axis_pen = pg.mkPen(self.theme["axis"])
         self.plot.getAxis("bottom").setPen(axis_pen)
@@ -239,11 +293,11 @@ class RFBridgeWindow:
         self.peak_curve = self.plot.plot([], [], pen=pg.mkPen("#ff3333", width=1.5), name="Peak Hold")
         self.threshold_85 = pg.InfiniteLine(pos=-85, angle=0, pen=pg.mkPen("#ffaa00", width=1, style=self.Qt.DashLine))
         self.threshold_60 = pg.InfiniteLine(pos=-60, angle=0, pen=pg.mkPen("#ff00aa", width=1, style=self.Qt.DashLine))
-        self.plot.addItem(self.threshold_85)
-        self.plot.addItem(self.threshold_60)
+        self.plot.addItem(self.threshold_85, ignoreBounds=True)
+        self.plot.addItem(self.threshold_60, ignoreBounds=True)
         self.cursor_line = pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen("#00ff99", width=1))
         self.cursor_line.setVisible(False)
-        self.plot.addItem(self.cursor_line)
+        self.plot.addItem(self.cursor_line, ignoreBounds=True)
 
         side_panel = QFrame()
         side_panel.setObjectName("sidePanel")
@@ -260,6 +314,11 @@ class RFBridgeWindow:
         self.hover_label.setObjectName("hoverLabel")
         self.hover_label.setAlignment(self.Qt.AlignTop | self.Qt.AlignLeft)
         self.hover_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
+        # Keep the hover readout from asking Qt's layout system for more height
+        # as the cursor moves. Without this, vertical mouse movement over the
+        # graph can make the main window grow unexpectedly on macOS.
+        self.hover_label.setMinimumHeight(82)
+        self.hover_label.setMaximumHeight(96)
 
         self.peak_button = QPushButton("Peak: OFF")
         self.reset_button = QPushButton("Reset Peaks")
@@ -290,7 +349,7 @@ class RFBridgeWindow:
         self.status_label.setMinimumHeight(38)
         self.status_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
 
-        root_layout.addWidget(connection_panel)
+        root_layout.addLayout(top_layout)
         root_layout.addLayout(content_layout, stretch=1)
         root_layout.addWidget(self.log_box)
         root_layout.addWidget(self.status_label)
@@ -307,6 +366,8 @@ class RFBridgeWindow:
         self.refresh_button.clicked.connect(self.toggle_refresh)
         self.freeze_button.clicked.connect(self.toggle_freeze)
         self.return_live_button.clicked.connect(self.return_to_live)
+        self.open_overlay_button.clicked.connect(self.open_capture_overlays)
+        self.clear_overlay_button.clicked.connect(self.clear_capture_overlays)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_move)
         self.window.destroyed.connect(self.shutdown)
 
@@ -315,15 +376,15 @@ class RFBridgeWindow:
         self.update_status()
         self.mic_markers = load_markers(self.settings)
         self.render_mic_markers()
-        self.log("RF Bridge v1.9 ready")
+        self.log(f"RF Bridge v{__version__} ready")
 
         # Defer connection until after the window is shown and the Qt event loop
         # is running. In a packaged macOS app, doing serial auto-detection during
         # window construction can make the app appear to launch and then vanish.
         if selected_port:
-            self.QTimer.singleShot(250, self.connect_device)
+            self.QTimer.singleShot(900, self.connect_device)
         else:
-            self.QTimer.singleShot(250, self.try_auto_connect)
+            self.QTimer.singleShot(900, self.try_auto_connect)
 
     def resolve_theme_name(self, appearance):
         if appearance == "Light":
@@ -343,13 +404,15 @@ class RFBridgeWindow:
         QMainWindow, QWidget {{ background: {t['window_bg']}; color: {t['text']}; font-family: Arial, Helvetica, sans-serif; }}
         QMenuBar, QMenu {{ background: {t['panel_bg']}; color: {t['text']}; border: 1px solid {t['border']}; }}
         QMenuBar::item:selected, QMenu::item:selected {{ background: {t['button_hover']}; }}
-        QFrame#connectionPanel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
+        QFrame#connectionPanel, QFrame#overlayPanel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
         QFrame#sidePanel {{ background: {t['side_bg']}; border-left: 1px solid {t['border']}; }}
         QLabel#summaryLabel, QLabel#hoverLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; }}
         QLabel#hoverLabel {{ background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 8px; }}
         QLabel#statusLabel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }}
         QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; }}
         QLabel#connectionStatus {{ font-weight: bold; }}
+        QLabel#overlayTitle {{ font-weight: bold; font-family: Menlo, Monaco, Consolas, monospace; }}
+        QLabel#overlayEmptyLabel {{ color: {t['muted_text']}; }}
         QTextEdit#logBox {{ background: {t['log_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding: 6px; }}
         QPushButton, QComboBox, QLineEdit {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
         QPushButton:hover, QComboBox:hover {{ background: {t['button_hover']}; }}
@@ -373,10 +436,47 @@ class RFBridgeWindow:
         preferences_action.triggered.connect(self.open_preferences)
         app_menu.addAction(preferences_action)
 
+        open_overlay_action = self.QAction("Open Capture Overlay(s)…", self.window)
+        open_overlay_action.triggered.connect(self.open_capture_overlays)
+        file_menu.addAction(open_overlay_action)
+
+        clear_overlays_action = self.QAction("Clear Capture Overlays", self.window)
+        clear_overlays_action.triggered.connect(self.clear_capture_overlays)
+        file_menu.addAction(clear_overlays_action)
+
+        self.overlay_menu = self.window.menuBar().addMenu("Overlays")
+        self.rebuild_overlay_menu()
+
+        profiles_menu = self.window.menuBar().addMenu("Profiles")
+        new_profile_action = self.QAction("New Gig Profile…", self.window)
+        new_profile_action.triggered.connect(self.new_profile)
+        profiles_menu.addAction(new_profile_action)
+
+        save_profile_action = self.QAction("Export Current Profile…", self.window)
+        save_profile_action.triggered.connect(self.export_profile)
+        profiles_menu.addAction(save_profile_action)
+
+        load_profile_action = self.QAction("Import Profile…", self.window)
+        load_profile_action.triggered.connect(self.import_profile)
+        profiles_menu.addAction(load_profile_action)
+
         tools_menu = self.window.menuBar().addMenu("Tools")
-        mic_plot_action = self.QAction("Mic Plot…", self.window)
+        mic_plot_action = self.QAction("Markers / Mic Plot…", self.window)
         mic_plot_action.triggered.connect(self.open_mic_plot)
         tools_menu.addAction(mic_plot_action)
+
+        help_menu = self.window.menuBar().addMenu("Help")
+        wiki_action = self.QAction("RF Bridge Wiki…", self.window)
+        wiki_action.triggered.connect(self.open_wiki)
+        help_menu.addAction(wiki_action)
+
+        open_folder_action = self.QAction("Open Scan Folder", self.window)
+        open_folder_action.triggered.connect(self.open_scan_folder)
+        help_menu.addAction(open_folder_action)
+
+        about_action = self.QAction("About RF Bridge", self.window)
+        about_action.triggered.connect(self.open_about)
+        help_menu.addAction(about_action)
 
     def apply_theme(self):
         self.theme_name = self.resolve_theme_name(self.appearance)
@@ -391,6 +491,7 @@ class RFBridgeWindow:
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
         self.update_connection_state(self.connected, self.connection_status.text())
         self.render_mic_markers()
+        self.render_capture_overlays()
 
     def open_capture(self):
         from PySide6.QtWidgets import QFileDialog
@@ -426,6 +527,8 @@ class RFBridgeWindow:
         self.peak_history = []
 
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
+        self.plot.setYRange(-110, -20, padding=0)
+        self.plot.disableAutoRange()
         self.cursor_line.setPos(self.freqs_mhz[0])
         self.render_mic_markers()
         self.live_curve.setData(self.freqs_mhz, self.display_dbm)
@@ -449,12 +552,271 @@ class RFBridgeWindow:
         self.last_cursor_index = None
         self.return_live_button.setEnabled(False)
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
+        self.plot.setYRange(-110, -20, padding=0)
+        self.plot.disableAutoRange()
         self.cursor_line.setPos(self.freqs_mhz[0])
         self.render_mic_markers()
         self.render_scan(self.latest_dbm)
         self.log("Returned to live trace")
         self.update_status()
 
+
+    def next_overlay_color(self):
+        colors = [
+            "#33aaff", "#ffaa00", "#cc66ff", "#eeeeee", "#ff3333", "#00ff99",
+            "#00e5ff", "#ff7a00", "#ff66cc", "#7cff00", "#b388ff", "#a0a0a0",
+        ]
+        color = colors[self.overlay_color_index % len(colors)]
+        self.overlay_color_index += 1
+        return color
+
+    def open_capture_overlays(self):
+        from PySide6.QtWidgets import QFileDialog
+
+        start_dir = self.output_dir if os.path.isdir(self.output_dir) else self.settings.get_storage_root()
+        paths, _ = QFileDialog.getOpenFileNames(
+            self.window,
+            "Open RF Bridge Capture Overlay(s)",
+            start_dir,
+            "CSV captures (*.csv);;All files (*)",
+        )
+
+        if not paths:
+            return
+
+        loaded = 0
+        for path in paths:
+            try:
+                capture = load_capture_csv(path)
+            except Exception as exc:
+                self.log(f"Overlay load failed for {os.path.basename(path)}: {exc}")
+                continue
+            capture["visible"] = True
+            capture["color"] = self.next_overlay_color()
+            self.capture_overlays.append(capture)
+            loaded += 1
+
+        self.render_capture_overlays()
+        self.rebuild_overlay_menu()
+        self.log(f"Loaded {loaded} capture overlay(s)")
+        self.update_status()
+
+    def render_capture_overlays(self):
+        for item in self.capture_overlay_items:
+            try:
+                self.plot.removeItem(item)
+            except Exception:
+                pass
+        self.capture_overlay_items = []
+
+        for capture in self.capture_overlays:
+            if not capture.get("visible", True):
+                continue
+            curve = self.plot.plot(
+                capture["freqs_mhz"],
+                capture["dbm"],
+                pen=self.pg.mkPen(capture.get("color", "#33aaff"), width=1.3),
+                name=capture.get("name", "Capture"),
+            )
+            curve.setZValue(2)
+            self.capture_overlay_items.append(curve)
+
+    def rebuild_overlay_menu(self):
+        if not hasattr(self, "overlay_menu"):
+            return
+        self.overlay_menu.clear()
+        if not self.capture_overlays:
+            empty_action = self.QAction("No capture overlays loaded", self.window)
+            empty_action.setEnabled(False)
+            self.overlay_menu.addAction(empty_action)
+            self.rebuild_overlay_panel()
+            return
+        for index, capture in enumerate(self.capture_overlays):
+            action = self.QAction(capture.get("name", f"Capture {index + 1}"), self.window)
+            action.setCheckable(True)
+            action.setChecked(bool(capture.get("visible", True)))
+            action.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
+            self.overlay_menu.addAction(action)
+            self.capture_overlay_actions.append(action)
+        self.overlay_menu.addSeparator()
+        clear_action = self.QAction("Clear Capture Overlays", self.window)
+        clear_action.triggered.connect(self.clear_capture_overlays)
+        self.overlay_menu.addAction(clear_action)
+        self.rebuild_overlay_panel()
+
+    def rebuild_overlay_panel(self):
+        from PySide6.QtWidgets import QLabel, QCheckBox
+
+        if not hasattr(self, "overlay_controls_row"):
+            return
+
+        while self.overlay_controls_row.count():
+            item = self.overlay_controls_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+
+        self.overlay_checkbox_widgets = []
+        if not self.capture_overlays:
+            self.overlay_empty_label = QLabel("No overlays loaded")
+            self.overlay_empty_label.setObjectName("overlayEmptyLabel")
+            self.overlay_controls_row.addWidget(self.overlay_empty_label)
+            self.overlay_controls_row.addStretch(1)
+            return
+
+        for index, capture in enumerate(self.capture_overlays[:6]):
+            label = capture.get("name", f"Capture {index + 1}")
+            if len(label) > 24:
+                label = label[:21] + "…"
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(bool(capture.get("visible", True)))
+            checkbox.setStyleSheet(f"color: {capture.get('color', self.theme['text'])};")
+            checkbox.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
+            self.overlay_controls_row.addWidget(checkbox)
+            self.overlay_checkbox_widgets.append(checkbox)
+
+        if len(self.capture_overlays) > 6:
+            more_label = QLabel(f"+{len(self.capture_overlays) - 6} more in Overlays menu")
+            more_label.setObjectName("overlayEmptyLabel")
+            self.overlay_controls_row.addWidget(more_label)
+
+        self.overlay_controls_row.addStretch(1)
+
+    def set_overlay_visible(self, index, visible):
+        if 0 <= index < len(self.capture_overlays):
+            self.capture_overlays[index]["visible"] = bool(visible)
+            self.render_capture_overlays()
+            self.rebuild_overlay_panel()
+            self.update_status()
+
+    def clear_capture_overlays(self):
+        self.capture_overlays = []
+        self.render_capture_overlays()
+        self.rebuild_overlay_menu()
+        self.log("Capture overlays cleared")
+        self.update_status()
+
+    def new_profile(self):
+        from PySide6.QtWidgets import QFileDialog, QInputDialog
+        from .utils import safe_name
+
+        gig_name, ok = QInputDialog.getText(self.window, "New Gig Profile", "Gig/session name:", text="")
+        if not ok:
+            return
+        gig_name = gig_name.strip()
+        if not gig_name:
+            self.show_error("Gig/session name is required.")
+            return
+
+        storage_root = QFileDialog.getExistingDirectory(
+            self.window,
+            "Choose RF Bridge Storage Location",
+            self.settings.get_storage_root(),
+        ) or self.settings.get_storage_root()
+
+        self.gig_slug = safe_name(gig_name)
+        self.output_dir = os.path.join(storage_root, "wwb_scans", self.gig_slug)
+        os.makedirs(self.output_dir, exist_ok=True)
+        self.settings.set_storage_root(storage_root)
+        self.clear_capture_overlays()
+        self.loaded_capture = None
+        self.capture_mode = False
+        self.return_live_button.setEnabled(False)
+        self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
+        self.log(f"Profile switched to: {self.gig_slug}")
+        self.update_status()
+
+    def export_profile(self):
+        from PySide6.QtWidgets import QFileDialog
+
+        profile = {
+            "version": 1,
+            "app_version": __version__,
+            "gig_slug": self.gig_slug,
+            "output_dir": self.output_dir,
+            "storage_root": self.settings.get_storage_root(),
+            "refresh_seconds": self.refresh_seconds,
+            "appearance": self.appearance,
+            "markers": self.mic_markers,
+            "capture_overlays": [capture.get("path") for capture in self.capture_overlays if capture.get("path")],
+        }
+
+        default_path = os.path.join(self.settings.get_storage_root(), f"{self.gig_slug}.rfbridge-profile.json")
+        path, _ = QFileDialog.getSaveFileName(
+            self.window,
+            "Export RF Bridge Profile",
+            default_path,
+            "RF Bridge Profile (*.rfbridge-profile.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(profile, file, indent=2)
+        self.log(f"Profile exported: {os.path.basename(path)}")
+
+    def import_profile(self):
+        from PySide6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self.window,
+            "Import RF Bridge Profile",
+            self.settings.get_storage_root(),
+            "RF Bridge Profile (*.rfbridge-profile.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                profile = json.load(file)
+        except Exception as exc:
+            self.show_error(f"Could not import profile:\n{exc}")
+            return
+
+        self.gig_slug = str(profile.get("gig_slug") or self.gig_slug)
+        self.output_dir = str(profile.get("output_dir") or self.output_dir)
+        os.makedirs(self.output_dir, exist_ok=True)
+        storage_root = profile.get("storage_root")
+        if storage_root:
+            self.settings.set_storage_root(str(storage_root))
+        self.mic_markers = save_markers(self.settings, profile.get("markers", []))
+        self.set_refresh_interval(float(profile.get("refresh_seconds", self.refresh_seconds)))
+        self.appearance = str(profile.get("appearance", self.appearance))
+        self.settings.set_appearance(self.appearance)
+        self.apply_theme()
+        self.clear_capture_overlays()
+        for capture_path in profile.get("capture_overlays", []):
+            try:
+                capture = load_capture_csv(capture_path)
+                capture["visible"] = True
+                capture["color"] = self.next_overlay_color()
+                self.capture_overlays.append(capture)
+            except Exception as exc:
+                self.log(f"Could not reload overlay {capture_path}: {exc}")
+        self.render_capture_overlays()
+        self.rebuild_overlay_menu()
+        self.render_mic_markers()
+        self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
+        self.log(f"Profile imported: {os.path.basename(path)}")
+        self.update_status()
+
+    def open_about(self):
+        self.QMessageBox.about(
+            self.window,
+            "About RF Bridge",
+            f"RF Bridge v{__version__}<br><br>tinySA → WWB bridge and live RF visualization utility for macOS.<br><br>Built for live sound engineers, RF coordinators, and wireless techs.",
+        )
+
+    def open_wiki(self):
+        webbrowser.open("https://github.com/sweenster247/RF_Bridge/wiki")
+        self.log("Opened RF Bridge wiki")
+
+    def open_scan_folder(self):
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        os.makedirs(self.output_dir, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self.output_dir))
+        self.log("Opened scan folder")
 
     def open_mic_plot(self):
         from PySide6.QtWidgets import (
@@ -472,7 +834,7 @@ class RFBridgeWindow:
         )
 
         dialog = QDialog(self.window)
-        dialog.setWindowTitle("Mic Plot")
+        dialog.setWindowTitle("Markers / Mic Plot")
         dialog.setMinimumSize(720, 420)
 
         layout = QVBoxLayout(dialog)
@@ -607,8 +969,8 @@ class RFBridgeWindow:
             # labels remain visible instead of clipping against the title area.
             label.setPos(freq, -32)
             label.setZValue(20)
-            self.plot.addItem(line)
-            self.plot.addItem(label)
+            self.plot.addItem(line, ignoreBounds=True)
+            self.plot.addItem(label, ignoreBounds=True)
             self.mic_marker_items.extend([line, label])
 
     def open_preferences(self):
@@ -719,6 +1081,7 @@ class RFBridgeWindow:
         if index >= 0:
             self.port_combo.setCurrentIndex(index)
         self.log(f"Auto-detected tinySA: {port}")
+        self.auto_connect_in_progress = True
         self.connect_device()
 
     def connect_device(self):
@@ -764,6 +1127,7 @@ class RFBridgeWindow:
         self.worker_thread = None
 
     def on_connected(self, port, version, freqs_mhz):
+        self.auto_connect_in_progress = False
         self.connected = True
         self.selected_port = port
         self.freqs_mhz = freqs_mhz
@@ -772,6 +1136,8 @@ class RFBridgeWindow:
         self.display_dbm = []
         self.reset_peaks()
         self.plot.setXRange(min(freqs_mhz), max(freqs_mhz), padding=0)
+        self.plot.setYRange(-110, -20, padding=0)
+        self.plot.disableAutoRange()
         self.cursor_line.setPos(freqs_mhz[0])
         self.render_mic_markers()
         self.version_label.setText(f"Device: {version or 'tinySA'}")
@@ -787,8 +1153,37 @@ class RFBridgeWindow:
             self.log("Disconnected")
 
     def on_worker_error(self, message):
-        self.log(message)
-        self.show_error(message)
+        if self.shutting_down:
+            return
+
+        message_text = str(message)
+        self.log(message_text)
+        lowered = message_text.lower()
+
+        transient_empty_read = (
+            "returned no data" in lowered
+            or "no frequency points" in lowered
+            or "frequency range" in lowered
+        )
+
+        if transient_empty_read:
+            self.scan_error_count += 1
+            self.log("tinySA did not return data yet; leaving the UI open for retry/reconnect")
+            self.update_connection_state(False, "Disconnected — tinySA not ready")
+            self.auto_connect_in_progress = False
+            self.disconnect_device()
+            # Do not show a modal startup warning for this recoverable case. The
+            # app should stay usable for capture overlays and manual reconnect.
+            return
+
+        # Auto-connect should never block app startup with a modal error.
+        # Manual non-transient errors still show the warning so troubleshooting is obvious.
+        if self.auto_connect_in_progress:
+            self.auto_connect_in_progress = False
+            self.disconnect_device()
+            self.update_connection_state(False, "Disconnected — tinySA not ready")
+            return
+        self.show_error(message_text)
 
     def update_connection_state(self, connected, text=None):
         self.connected = connected
@@ -804,6 +1199,8 @@ class RFBridgeWindow:
         self.update_status()
 
     def show_error(self, message):
+        if self.shutting_down:
+            return
         self.QMessageBox.warning(self.window, "RF Bridge", message)
 
     def nearest_index(self, freq):
@@ -872,6 +1269,7 @@ class RFBridgeWindow:
         self.update_hover_label(None)
 
     def on_scan_ready(self, dbm):
+        self.scan_error_count = 0
         live_freqs = self.live_freqs_mhz or self.freqs_mhz
         if not live_freqs:
             return
@@ -913,6 +1311,7 @@ class RFBridgeWindow:
             if self.peak_hold:
                 self.peak_curve.setData(self.freqs_mhz, self.peak_hold)
         self.live_curve.setData(self.freqs_mhz, dbm)
+        self.render_capture_overlays()
         self.update_top_frequencies(dbm)
         self.plot.setTitle(f"RF Bridge - {self.gig_slug} - {time_12h()}", color=self.theme["text"], size="16pt")
 
@@ -932,7 +1331,7 @@ class RFBridgeWindow:
         for freq, level in strongest:
             marker = self.pg.InfiniteLine(pos=freq, angle=90, pen=self.pg.mkPen(self.theme["marker"], width=1, style=self.Qt.DotLine))
             marker.setZValue(-10)
-            self.plot.addItem(marker)
+            self.plot.addItem(marker, ignoreBounds=True)
             self.top_markers.append(marker)
 
     def update_hover_label(self, idx):
@@ -984,20 +1383,65 @@ class RFBridgeWindow:
             freeze_label = f"Loaded Capture: {self.loaded_capture['name']}"
         else:
             freeze_label = "Frozen" if self.frozen else "Live"
+        overlay_count = sum(1 for capture in self.capture_overlays if capture.get("visible", True))
         self.status_label.setText(
             f"Scan Folder: {self.output_dir}   |   Latest: latest_scan.csv   |   "
             f"Next Save: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
-            f"Mode: {freeze_label}   |   tinySA: {self.selected_port or 'not connected'}"
+            f"Mode: {freeze_label}   |   Overlays: {overlay_count}   |   tinySA: {self.selected_port or 'not connected'}"
         )
 
+    def handle_close_event(self, event):
+        self.shutdown()
+        event.accept()
+
     def shutdown(self):
-        self.settings.set("window_geometry", self.window.saveGeometry())
-        if self.worker is not None:
-            self.QMetaObject.invokeMethod(
-                self.worker,
-                "stop",
-                self.Qt.QueuedConnection,
-            )
+        if self.shutdown_started:
+            return
+
+        self.shutdown_started = True
+        self.shutting_down = True
+
+        try:
+            self.settings.set("window_geometry", self.window.saveGeometry())
+        except Exception:
+            pass
+
+        worker = self.worker
+        worker_thread = self.worker_thread
+
+        if worker is not None:
+            try:
+                connection_type = self.Qt.BlockingQueuedConnection
+                if worker.thread() == self.app.thread():
+                    connection_type = self.Qt.DirectConnection
+                self.QMetaObject.invokeMethod(
+                    worker,
+                    "stop",
+                    connection_type,
+                )
+            except Exception:
+                try:
+                    self.QMetaObject.invokeMethod(
+                        worker,
+                        "stop",
+                        self.Qt.QueuedConnection,
+                    )
+                except Exception:
+                    pass
+
+        if worker_thread is not None:
+            try:
+                worker_thread.quit()
+                if not worker_thread.wait(3000):
+                    self.log("Worker thread did not exit cleanly within 3 seconds; forcing termination")
+                    worker_thread.terminate()
+                    worker_thread.wait(1000)
+            except RuntimeError:
+                pass
+
+        self.worker = None
+        self.worker_thread = None
+        self.connected = False
 
     def run(self):
         self.window.show()

@@ -1,14 +1,13 @@
 [project]
 name = "rf-bridge"
-version = "1.9.2"
-description = "tinySA to Wireless Workbench RF scan bridge"
-requires-python = ">=3.10"
+version = "1.9.4.8"
+description = "tinySA to WWB bridge and live RF visualization utility for macOS"
+requires-python = ">=3.11"
 dependencies = [
     "pyserial",
     "PySide6",
     "pyqtgraph",
-    "pyinstaller",
 ]
 
-[project.scripts]
-rf-bridge = "rf_bridge.app:main"
+[tool.rf-bridge]
+app-name = "RF Bridge"

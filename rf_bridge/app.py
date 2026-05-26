@@ -7,7 +7,7 @@ import time
 
 import serial
 
-from .config import BAUD, SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS
+from .config import BAUD, SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
 from .scanner import read_frequencies_mhz, run_headless
 from .tinysa import (
     candidate_serial_ports,
@@ -94,6 +94,10 @@ def prompt_gig_name_gui(default_name="RF Bridge Scan"):
     from PySide6.QtWidgets import QApplication, QInputDialog
 
     app = QApplication.instance() or QApplication([])
+    # Modal startup prompts run before the main window exists. Disable
+    # auto-quit here so closing a prompt does not leave a pending quit
+    # event that immediately exits the packaged app when the main UI starts.
+    app.setQuitOnLastWindowClosed(False)
     text, ok = QInputDialog.getText(
         None,
         "RF Bridge",
@@ -125,6 +129,9 @@ def prompt_storage_root_gui(default_root=None):
     from PySide6.QtWidgets import QApplication, QFileDialog
 
     app = QApplication.instance() or QApplication([])
+    # See prompt_gig_name_gui: startup dialogs appear before the main
+    # window, so prevent Qt from treating dialog close as application exit.
+    app.setQuitOnLastWindowClosed(False)
     default_root = default_root or default_app_storage_root()
     os.makedirs(default_root, exist_ok=True)
 
@@ -225,10 +232,10 @@ def main(argv=None):
     with serial.Serial(
         selected_port,
         BAUD,
-        timeout=2
+        timeout=TINYSA_SERIAL_TIMEOUT_SECONDS
     ) as ser:
 
-        time.sleep(1)
+        time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)
 
         if version_output is None:
             version_output = send_command(

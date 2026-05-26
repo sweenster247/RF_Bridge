@@ -1,16 +1,50 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_submodules
-
 block_cipher = None
 
-hiddenimports = []
-hiddenimports += collect_submodules('PySide6')
-hiddenimports += collect_submodules('pyqtgraph')
-hiddenimports += [
+hiddenimports = [
+    'PySide6.QtCore',
+    'PySide6.QtGui',
+    'PySide6.QtWidgets',
+    'pyqtgraph',
     'serial',
     'serial.tools',
     'serial.tools.list_ports',
+]
+
+excludes = [
+    'PySide6.Qt3DCore',
+    'PySide6.Qt3DRender',
+    'PySide6.QtCharts',
+    'PySide6.QtDataVisualization',
+    'PySide6.QtDesigner',
+    'PySide6.QtHelp',
+    'PySide6.QtMultimedia',
+    'PySide6.QtNetworkAuth',
+    'PySide6.QtOpenGL',
+    'PySide6.QtPdf',
+    'PySide6.QtPositioning',
+    'PySide6.QtQml',
+    'PySide6.QtQuick',
+    'PySide6.QtQuick3D',
+    'PySide6.QtRemoteObjects',
+    'PySide6.QtScxml',
+    'PySide6.QtSensors',
+    'PySide6.QtSerialPort',
+    'PySide6.QtSql',
+    'PySide6.QtSvg',
+    'PySide6.QtTest',
+    'PySide6.QtWebChannel',
+    'PySide6.QtWebEngineCore',
+    'PySide6.QtWebEngineWidgets',
+    'PySide6.QtWebSockets',
+    'PySide6.QtXml',
+    'PySide6.QtXmlPatterns',
+    'tkinter',
+    'matplotlib',
+    'numpy.tests',
+    'scipy',
+    'pandas',
 ]
 
 a = Analysis(
@@ -22,7 +56,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -65,8 +99,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleDisplayName': 'RF Bridge',
         'CFBundleName': 'RF Bridge',
-        'CFBundleShortVersionString': '1.9.2',
-        'CFBundleVersion': '1.9.2',
+        'CFBundleShortVersionString': '1.9.4.8',
+        'CFBundleVersion': '1.9.4.8',
         'NSHighResolutionCapable': True,
     },
 )

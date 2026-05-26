@@ -5,7 +5,7 @@ import time
 import serial
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
-from .config import BAUD
+from .config import BAUD, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
 from .scanner import read_frequencies_mhz, read_scan_dbm
 from .tinysa import send_command
 
@@ -28,14 +28,17 @@ class ScanWorker(QObject):
         self.timer = None
         self.freqs_mhz = []
         self.running = False
+        self._stopped_emitted = False
 
     @Slot()
     def start(self):
         try:
-            self.ser = serial.Serial(self.port, self.baud, timeout=2)
-            time.sleep(1)
+            self.ser = serial.Serial(self.port, self.baud, timeout=TINYSA_SERIAL_TIMEOUT_SECONDS)
+            self.log.emit(f"Waiting {TINYSA_STARTUP_SETTLE_SECONDS:g}s for tinySA console…")
+            time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)
 
             version = send_command(self.ser, "version").strip()
+            self.log.emit("Reading tinySA frequency range…")
             self.freqs_mhz = read_frequencies_mhz(self.ser)
 
             self.running = True
@@ -66,18 +69,28 @@ class ScanWorker(QObject):
         try:
             dbm = read_scan_dbm(self.ser)
         except Exception as exc:
-            self.error.emit(f"Scan error: {exc}")
+            # During app shutdown the serial port may already be closing. Do not
+            # surface that as a user-facing scan error.
+            if self.running:
+                self.error.emit(f"Scan error: {exc}")
             self.stop()
             return
 
-        self.scan_ready.emit(dbm)
+        if self.running:
+            self.scan_ready.emit(dbm)
 
     @Slot()
     def stop(self):
+        if self._stopped_emitted:
+            return
+
         self.running = False
 
         if self.timer is not None:
-            self.timer.stop()
+            try:
+                self.timer.stop()
+            except Exception:
+                pass
             self.timer.deleteLater()
             self.timer = None
 
@@ -89,4 +102,5 @@ class ScanWorker(QObject):
                 pass
             self.ser = None
 
+        self._stopped_emitted = True
         self.disconnected.emit()

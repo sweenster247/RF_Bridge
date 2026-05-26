@@ -1,5 +1,61 @@
 # Changelog
 
+## v1.9.4.11
+- Fixed graph auto-resize issue when moving the mouse vertically across the plot
+- Locked plot auto-ranging for cursor, threshold, mic marker, and Top 8 guide lines
+- Constrained hover readout height so the main window layout remains stable
+- Based on the confirmed-working v1.9.4.10 tinySA connection path
+
+## v1.9.4.10
+- Increased tinySA startup settle time before issuing serial commands
+- Increased serial read timeout for tinySA4 console responses
+- Added startup log message while waiting for tinySA console readiness
+- Based on diagnostic results showing tinySA4 responds reliably after a 5 second settle window
+
+## v1.9.4.9
+- Added standalone tinySA serial diagnostic helper
+- Added raw command capture for version, frequencies, and data reads
+- Added CR/LF/CRLF command ending tests for troubleshooting device communication
+- No functional UI changes from v1.9.4.8
+
+## v1.9.4.8
+- Restored the proven v1.8-style tinySA frequency read path
+- Removed aggressive startup pause/resume behavior that could cause empty frequency lists on some tinySA units
+- Kept conservative retry handling without blocking the app UI
+
+## v1.9.4.8
+- Improved tinySA startup/connect reliability after v1.9.4 overlay/shutdown changes
+- Added more tolerant tinySA frequency-range initialization with pause/read/resume retries
+- Prevented transient empty frequency reads from showing blocking startup dialogs
+- Kept UI open for capture overlays and manual reconnect when tinySA is not ready
+
+## v1.9.4.4
+- Fixed app launch failure caused by missing overlay panel Qt widget imports
+- Restored command-line `--ui` startup after v1.9.4.3
+
+
+## v1.9.4.3
+- Reduced the connection panel footprint and moved capture overlay controls beside it
+- Added top-bar overlay visibility toggles for quick show/hide access
+- Expanded Mic Plot / Marker color options
+- Quietly retries transient empty scan reads before showing a warning dialog
+
+## v1.9.4.3
+- Added profile workflows for multi-gig days
+- Added profile import/export using `.rfbridge-profile.json` files
+- Added multi-capture overlay loading
+- Added overlay show/hide toggles from the Overlays menu
+- Added Help/About menu entries
+- Added starter WIKI documentation
+- Improved startup handling so failed tinySA auto-connect attempts do not block app launch
+- Optimized PyInstaller hidden imports/excludes to reduce app bundle creep
+
+## v1.9.3
+- Fixed tinySA startup auto-connect regression where the app could report no frequency points before the device was ready
+- Added retry handling when reading the tinySA frequency range during connection
+- Slightly delayed packaged-app auto-connect so the main window and serial device have time to settle
+- Preserved manual Connect/Disconnect behavior
+
 ## v1.9.2
 - Refined macOS app icon using RF Bridge logo artwork
 - Updated build scripts to regenerate `.icns` when icon source changes

@@ -8,9 +8,18 @@ from serial.tools import list_ports
 from .config import BAUD
 
 
-def send_command(ser, cmd):
+def send_command(ser, cmd, delay_seconds=0.2):
+    """Send a tinySA console command and return text output.
+
+    v1.9.4.x temporarily became too aggressive about draining the serial
+    buffer and pausing/resuming the tinySA sweep before reading frequencies.
+    Some tinySA units tolerate that poorly and return an empty frequency list.
+
+    This restores the proven v1.8-style command path while keeping the
+    optional delay_seconds argument used by newer callers.
+    """
     ser.write((cmd + "\r").encode())
-    time.sleep(0.2)
+    time.sleep(delay_seconds)
     return ser.read_until(b"ch> ").decode(errors="ignore")
 
 
