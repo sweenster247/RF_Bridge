@@ -1,6 +1,12 @@
 # Changelog
 
-## v1.9.1
+## v1.9.2
+- Refined macOS app icon using RF Bridge logo artwork
+- Updated build scripts to regenerate `.icns` when icon source changes
+- Updated app icon source to use the RF Bridge logo artwork
+- Added consolidated `build_release.sh` workflow for app, DMG, and ZIP release artifacts
+- Standardized release artifact names as `RF-Bridge-v{version}-macOS-arm64.dmg` and `RF-Bridge-v{version}-macOS-arm64.zip`
+- Updated build scripts to read version metadata from `rf_bridge/version.py`
 - Improved Mic Plot label placement so marker names remain visible inside the graph
 - Added MHz suffix to Mic Plot labels
 - Added subtle label background/border for better readability

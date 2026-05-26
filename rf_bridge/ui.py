@@ -1,4 +1,4 @@
-"""PySide6 / pyqtgraph RF Bridge v1.8 UI."""
+"""PySide6 / pyqtgraph RF Bridge v1.9.2 UI."""
 
 import bisect
 import os

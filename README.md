@@ -1,34 +1,117 @@
-# RF Bridge v1.9.1
+# RF Bridge
 
-RF Bridge connects a tinySA to a Wireless Workbench-friendly CSV workflow with a live desktop RF display.
+<p align="center">
+  <img src="https://github.com/sweenster247/RF_Bridge/blob/main/assets/%20Logo.png" width="650" alt="RF Bridge Logo">
+</p>
 
-v1.9 adds Mic Plot markers so wireless/mic frequencies can be manually labeled on top of live, frozen, or loaded RF captures. v1.9.1 improves Mic Plot label placement/readability.
+<p align="center">
+  <strong>tinySA → WWB bridge and live RF visualization utility for macOS</strong>
+</p>
 
-## Highlights
+<p align="center">
+  Lightweight. Offline-first. Built for real-world RF workflows.
+</p>
 
-- PySide6 + pyqtgraph desktop UI
-- tinySA auto-detection and manual port selection
+---
+
+## Overview
+
+RF Bridge is a macOS desktop utility for live sound engineers, RF coordinators, and wireless technicians who want lightweight RF visibility using a tinySA spectrum analyzer.
+
+RF Bridge continuously captures scans from a tinySA, exports Wireless Workbench-compatible CSV files, and provides a live RF visualization interface with Mic Plot markers, saved capture loading, freeze trace, and peak hold analysis.
+
+Built with:
+
+- Python
+- PySide6
+- pyqtgraph
+- pyserial
+- PyInstaller
+
+---
+
+## Features
+
+### Live RF Visualization
+
+- Real-time RF graphing
+- Adjustable refresh intervals
+- Peak hold modes
+- Freeze Trace mode
+- RF summary display with strongest RF hits
+
+### tinySA Integration
+
+- Automatic tinySA detection
+- Manual serial port selection
 - Connect / Disconnect / Refresh Ports controls
-- Live RF graph with peak hold modes
-- Freeze Trace mode for inspecting a scan without stopping capture
-- WWB-compatible CSV export
-- `latest_scan.csv` live updating
-- Persistent settings using `QSettings`
-- Preferences window for appearance, default refresh, and default storage folder
-- Dark / Light / System appearance options
-- App icon source assets and macOS `.icns` generation script
-- PyInstaller `.app` build script
-- DMG build script using `create-dmg`
-- Open saved RF Bridge CSV captures from the File menu
-- Loaded Capture mode with Return to Live workflow
+- Frequency range detection
 
-## Install dependencies for source use
+### WWB Workflow Support
+
+- Continuous WWB-compatible CSV export
+- Automatic `latest_scan.csv` updating
+- Timestamped scan history
+
+### Capture Loading
+
+- Open previously saved RF Bridge CSV scans
+- Loaded Capture mode
+- Return to Live workflow
+- Live scanning can continue while reviewing saved captures
+
+### Mic Plot Markers
+
+- Add named frequency markers for vocals, IEMs, comms, backups, or known RF trouble spots
+- Persistent marker storage
+- Color-coded vertical marker lines
+- User-defined labels displayed directly on the RF graph
+- Markers display in Live, Frozen, and Loaded Capture modes
+
+### macOS Application Support
+
+- Packaged `.app` build workflow
+- DMG installer workflow
+- Release ZIP workflow
+- Light / Dark / System appearance modes
+- Persistent preferences/settings
+- Custom RF Bridge icon assets
+
+---
+
+## Installation
+
+Download the latest release from:
+
+```text
+https://github.com/sweenster247/RF_Bridge/releases
+```
+
+RF Bridge is currently unsigned. On first launch, macOS may require:
+
+```text
+Right-click RF Bridge.app > Open > Open
+```
+
+After the first launch, macOS should remember the application.
+
+---
+
+## Building from Source
+
+### Requirements
+
+- macOS
+- Python 3.10+
+- Homebrew, optional but recommended for DMG creation
+
+### Install Dependencies
 
 ```bash
 python3 -m pip install -r requirements.txt
 ```
 
-## Run from source
+### Run RF Bridge
 
 Start the desktop UI:
 
@@ -36,7 +119,7 @@ Start the desktop UI:
 python3 rf-bridge.py --ui
 ```
 
-Test the packaged-app flow from Terminal:
+Test packaged-app launch behavior from Terminal:
 
 ```bash
 python3 rf-bridge.py --app
@@ -60,57 +143,66 @@ List ports:
 python3 rf-bridge.py --list-ports
 ```
 
-Set initial refresh interval:
-
-```bash
-python3 rf-bridge.py --ui --refresh 1
-```
-
 Headless CSV capture still works:
 
 ```bash
 python3 rf-bridge.py
 ```
 
-## Loading saved captures
+---
 
-Open a previous RF Bridge CSV scan from:
+## Building Release Artifacts
 
-```text
-File > Open Capture…
+v1.9.2 adds a consolidated release build script.
+
+Install `create-dmg`:
+
+```bash
+brew install create-dmg
 ```
 
-Supported files use the same two-column RF Bridge / WWB-friendly format:
+Build the `.app`, DMG, and zipped app release artifacts:
 
-```text
-frequency_mhz, dbm
+```bash
+./build_release.sh
 ```
 
-When a capture is loaded, the graph enters **Loaded Capture** mode. Live scanning can continue in the background if a tinySA is connected, and new scans will still save to disk. Use:
+Expected outputs:
 
 ```text
-File > Return to Live
+dist/releases/RF-Bridge-v1.9.2-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.2-macOS-arm64.zip
 ```
 
-or the **Return to Live** button to resume the live trace.
+### Build Only the App
 
-## Preferences
+```bash
+./build_app.sh
+```
 
-Open:
+Output:
 
 ```text
-RF Bridge > Preferences…
+dist/RF Bridge.app
 ```
 
-Preferences currently supports:
+### Build Only the DMG
 
-- Appearance: `System`, `Dark`, or `Light`
-- Default refresh interval
-- Default storage folder for future app sessions
+After building the app:
 
-Storage changes apply to new app sessions. The current scan session keeps writing to the folder selected at launch.
+```bash
+./build_dmg.sh
+```
 
-## Packaged app launch flow
+Output:
+
+```text
+dist/releases/RF-Bridge-v1.9.2-macOS-arm64.dmg
+```
+
+---
+
+## App Launch Flow
 
 When launched as a packaged macOS app, RF Bridge prompts in this order:
 
@@ -134,66 +226,92 @@ Scan files are saved inside the selected storage root using:
 wwb_scans/<gig>
 ```
 
-For example, accepting the default storage location with a gig named `Blues Fest` saves to:
+For example:
 
 ```text
 ~/Documents/RF Bridge/wwb_scans/blues_fest
 ```
 
-## Build the macOS app bundle
+---
 
-From the project root on macOS:
+## Loading Saved Captures
 
-```bash
-./build_app.sh
-```
-
-The unsigned app bundle should be created at:
+Open a previous RF Bridge CSV scan from:
 
 ```text
-dist/RF Bridge.app
+File > Open Capture…
 ```
 
-First launch on macOS may require:
+Supported files use the same two-column RF Bridge / WWB-friendly format:
 
 ```text
-Right-click RF Bridge.app > Open > Open
+frequency_mhz, dbm
 ```
 
-That is expected for an unsigned local build.
-
-## Build the DMG
-
-Install `create-dmg`:
-
-```bash
-brew install create-dmg
-```
-
-Build the app, then build the DMG:
-
-```bash
-./build_app.sh
-./build_dmg.sh
-```
-
-The DMG should be created at:
+When a capture is loaded, the graph enters **Loaded Capture** mode. Use:
 
 ```text
-dist/RF-Bridge-v1.9-macOS.dmg
+File > Return to Live
 ```
 
-## App icon
+or the **Return to Live** button to resume the live trace.
 
-v1.9 includes:
+---
+
+## Mic Plot Markers
+
+Use:
 
 ```text
+Tools > Mic Plot…
+```
+
+to add named frequency markers such as:
+
+```text
+Vocal 1
+Vocal 2
+IEM A
+Comms
+Backup HH
+```
+
+Markers are saved in app settings and appear as labeled vertical lines on the graph.
+
+---
+
+## Preferences
+
+Open:
+
+```text
+RF Bridge > Preferences…
+```
+
+Preferences currently supports:
+
+- Appearance: `System`, `Dark`, or `Light`
+- Default refresh interval
+- Default storage folder for future app sessions
+
+Storage changes apply to new app sessions. The current scan session keeps writing to the folder selected at launch.
+
+---
+
+## App Icon
+
+v1.9.2 uses the RF Bridge logo artwork as the source for the packaged macOS app icon.
+
+Included assets:
+
+```text
+assets/Logo.png
 assets/rf-bridge-icon-1024.png
 assets/rf-bridge-icon.svg
 scripts/create_icon.sh
 ```
 
-`build_app.sh` automatically creates:
+`build_app.sh` and `build_release.sh` automatically create:
 
 ```text
 assets/rf-bridge.icns
@@ -201,17 +319,9 @@ assets/rf-bridge.icns
 
 on macOS if it does not already exist.
 
-## Recommended clean build workflow
+---
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
-./build_app.sh
-./build_dmg.sh
-```
-
-## Project layout
+## Project Structure
 
 ```text
 rf_bridge/config.py       shared defaults
@@ -221,30 +331,51 @@ rf_bridge/export.py       WWB CSV export and latest_scan.csv handling
 rf_bridge/scanner.py      scan validation and headless scan loop
 rf_bridge/worker.py       threaded tinySA scan worker for the UI
 rf_bridge/settings.py     persistent PySide6/QSettings helpers
+rf_bridge/capture.py      saved capture loading helpers
+rf_bridge/micplot.py      Mic Plot marker model/storage helpers
 rf_bridge/ui.py           PySide6 + pyqtgraph UI
 rf_bridge/app.py          command-line and packaged-app startup
+rf_bridge/version.py      app version metadata
 rf-bridge.py              compatibility launcher
 rf-bridge.spec            PyInstaller app bundle spec
-build_app.sh              macOS app build helper
-build_dmg.sh              macOS DMG build helper
+build_app.sh              app-only build helper
+build_dmg.sh              DMG-only build helper
+build_release.sh          app + DMG + ZIP release build helper
 scripts/create_icon.sh    macOS icon generation helper
-assets/                   app icon source assets
+assets/                   logo and app icon source assets
 ```
 
-## Notes
+---
 
-v1.9 does not include Apple code signing or notarization. That can come later after the app bundle and DMG flow are stable.
+## Current Release
 
-## Mic Plot Markers
+### RF Bridge v1.9.2
 
-Use `Tools > Mic Plot…` to add named frequency markers such as vocal mics, IEMs, comms, or known RF trouble spots. Markers are saved in app settings and appear as labeled vertical lines on the graph.
+- Updated app icon source to the RF Bridge logo artwork
+- Added consolidated release build script
+- Standardized release artifact names:
+  - `RF-Bridge-v{version}-macOS-arm64.dmg`
+  - `RF-Bridge-v{version}-macOS-arm64.zip`
+- Improved Mic Plot label placement and readability from v1.9.1
 
-Current marker fields:
+---
 
-- Visible
-- Name
-- Frequency MHz
-- Color preset
+## Planned Features
 
-Markers display in Live, Frozen, and Loaded Capture modes.
+- Multi-trace overlays
+- User-selectable trace colors
+- Signed/notarized macOS builds
+- Expanded RF analysis tools
+- Additional RF device support
 
+---
+
+## License
+
+MIT License
+
+---
+
+## Acknowledgements
+
+Built for live sound engineers, RF coordinators, and anyone tired of everything being a subscription these days.

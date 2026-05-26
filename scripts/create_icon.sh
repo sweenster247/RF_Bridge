@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Create a macOS .icns file from the included 1024px PNG.
+# Create a macOS .icns file from the included 1024px RF Bridge icon PNG.
 # Requires macOS command-line tools: sips + iconutil.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
