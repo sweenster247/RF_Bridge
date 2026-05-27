@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.9.5.25
+- Reduced live graph redraw work by keeping capture overlay curves alive between scans.
+- Reused Top RF Hit marker lines instead of recreating them every refresh.
+- Made Top RF Hit selection lighter while preserving the existing summary display.
+- Trimmed peak-hold history in place for timed peak modes.
+- Updated `latest_scan.csv` with an atomic replace instead of copying the timestamped capture file.
+- Restored GitHub dependency maintenance files in the repository.
+- Updated version metadata and README for v1.9.5.25.
+
 ## v1.9.5.24
 - Matched the top-right connection panel width to the RF Summary panel.
 - Added right-click refresh options with a custom refresh interval dialog.

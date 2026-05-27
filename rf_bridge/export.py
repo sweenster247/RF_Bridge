@@ -2,7 +2,6 @@
 
 import csv
 import os
-import shutil
 from datetime import datetime
 
 
@@ -19,16 +18,23 @@ def save_wwb_csv(output_dir, gig_slug, freqs_mhz, dbm):
         "latest_scan.csv"
     )
 
+    rows = [
+        [
+            f"{f:.6f}",
+            f"{level:.2f}",
+        ]
+        for f, level in zip(freqs_mhz, dbm)
+    ]
+
     with open(filename, "w", newline="\r\n") as file:
         writer = csv.writer(file)
+        writer.writerows(rows)
 
-        for f, level in zip(freqs_mhz, dbm):
-            writer.writerow([
-                f"{f:.6f}",
-                f"{level:.2f}"
-            ])
-
-    shutil.copyfile(filename, latest_filename)
+    latest_temp = f"{latest_filename}.tmp"
+    with open(latest_temp, "w", newline="\r\n") as file:
+        writer = csv.writer(file)
+        writer.writerows(rows)
+    os.replace(latest_temp, latest_filename)
 
     print(f"Saved:  {filename}")
     print(f"Latest: {latest_filename}")

@@ -18,13 +18,12 @@
 
 RF Bridge is a macOS desktop utility for live sound engineers, RF coordinators, and wireless technicians using a tinySA spectrum analyzer. It captures live RF scans, visualizes the spectrum in real time, and continuously writes Wireless Workbench-compatible CSV files for practical coordination workflows.
 
-## What’s New in v1.9.5.24
+## What’s New in v1.9.5.25
 
-- Matched the top-right connection panel width to the RF Summary panel.
-- Added right-click Refresh options, including a custom refresh interval dialog.
-- Added optional automatic live trace overlays in Preferences without creating extra CSV files.
-- Snapped hover readout and Top RF Hits frequencies to 0.005 MHz increments.
-- Added a little more spacing between right-side control icons and labels.
+- Reduced live graph redraw work for capture overlays and Top RF Hit markers.
+- Made Top RF Hit selection and timed Peak Hold bookkeeping lighter during fast refreshes.
+- Updated `latest_scan.csv` more safely with an atomic replace.
+- Restored repository dependency maintenance files for GitHub.
 
 ## Features
 
@@ -128,8 +127,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.5.24-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.5.24-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.5.25-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.5.25-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

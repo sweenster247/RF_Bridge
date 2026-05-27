@@ -1,6 +1,8 @@
-"""PySide6 / pyqtgraph RF Bridge v1.9.5.2 UI."""
+"""PySide6 / pyqtgraph RF Bridge UI."""
 
 import bisect
+from collections import deque
+import heapq
 import json
 import math
 import os
@@ -173,7 +175,7 @@ class RFBridgeWindow:
         self.peak_mode_index = 0
         self.peak_enabled = False
         self.peak_hold = None
-        self.peak_history = []
+        self.peak_history = deque()
         self.top_markers = []
         self.mic_markers = []
         self.mic_marker_items = []
@@ -792,7 +794,7 @@ class RFBridgeWindow:
         self.last_cursor_index = None
         self.peak_curve.setData([], [])
         self.peak_hold = None
-        self.peak_history = []
+        self.peak_history = deque()
 
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
         self.lock_plot_axes(preserve_x=True)
@@ -901,24 +903,34 @@ class RFBridgeWindow:
         self.update_status()
 
     def render_capture_overlays(self):
+        active_curves = []
+        for capture in self.capture_overlays:
+            curve = capture.get("_curve")
+            if curve is None:
+                curve = self.plot.plot(
+                    capture["freqs_mhz"],
+                    capture["dbm"],
+                    pen=self.pg.mkPen(capture.get("color", "#33aaff"), width=1.3),
+                    name=capture.get("name", "Capture"),
+                )
+                curve.setZValue(2)
+                capture["_curve"] = curve
+            else:
+                curve.setData(capture["freqs_mhz"], capture["dbm"])
+                curve.setPen(self.pg.mkPen(capture.get("color", "#33aaff"), width=1.3))
+            curve.setVisible(bool(capture.get("visible", True)))
+            curve.setZValue(2)
+            active_curves.append(curve)
+
+        active_ids = {id(curve) for curve in active_curves}
         for item in self.capture_overlay_items:
+            if id(item) in active_ids:
+                continue
             try:
                 self.plot.removeItem(item)
             except Exception:
                 pass
-        self.capture_overlay_items = []
-
-        for capture in self.capture_overlays:
-            if not capture.get("visible", True):
-                continue
-            curve = self.plot.plot(
-                capture["freqs_mhz"],
-                capture["dbm"],
-                pen=self.pg.mkPen(capture.get("color", "#33aaff"), width=1.3),
-                name=capture.get("name", "Capture"),
-            )
-            curve.setZValue(2)
-            self.capture_overlay_items.append(curve)
+        self.capture_overlay_items = active_curves
 
     def rebuild_overlay_menu(self):
         if not hasattr(self, "overlay_menu"):
@@ -1018,8 +1030,13 @@ class RFBridgeWindow:
             self.update_status()
 
     def clear_capture_overlays(self):
+        for item in self.capture_overlay_items:
+            try:
+                self.plot.removeItem(item)
+            except Exception:
+                pass
         self.capture_overlays = []
-        self.render_capture_overlays()
+        self.capture_overlay_items = []
         self.rebuild_overlay_menu()
         self.log("Capture overlays cleared")
         self.update_status()
@@ -1835,7 +1852,7 @@ class RFBridgeWindow:
         if label == "OFF":
             self.peak_enabled = False
             self.peak_hold = None
-            self.peak_history = []
+            self.peak_history = deque()
             self.peak_curve.setData([], [])
         else:
             self.peak_enabled = True
@@ -1850,7 +1867,7 @@ class RFBridgeWindow:
         self.peak_enabled = False
         self.peak_mode_index = 0
         self.peak_hold = None
-        self.peak_history = []
+        self.peak_history = deque()
         self.peak_button.setText("  Peak OFF")
         self.peak_curve.setData([], [])
         self.update_hover_label(None)
@@ -1908,15 +1925,15 @@ class RFBridgeWindow:
                     self.peak_hold = [max(old, new) for old, new in zip(self.peak_hold, dbm)]
             else:
                 cutoff = now - window_seconds
-                self.peak_history = [sample for sample in self.peak_history if sample[0] >= cutoff]
+                while self.peak_history and self.peak_history[0][0] < cutoff:
+                    self.peak_history.popleft()
                 if self.peak_history:
-                    samples = [sample[1] for sample in self.peak_history]
+                    samples = (sample[1] for sample in self.peak_history)
                     self.peak_hold = [max(values) for values in zip(*samples)]
             if self.peak_hold:
                 self.peak_curve.setData(self.freqs_mhz, self.peak_hold)
         self.live_curve.setData(self.freqs_mhz, dbm)
         self.update_frequency_range_labels()
-        self.render_capture_overlays()
         self.update_top_frequencies(dbm)
         self.lock_plot_axes(preserve_x=True)
         self.plot.setTitle(f"RF Bridge - {self.gig_slug} - {time_12h()}", color=self.theme["text"], size="16pt")
@@ -1930,7 +1947,7 @@ class RFBridgeWindow:
             return
 
         median_floor = sorted(dbm)[len(dbm) // 2]
-        strongest = sorted(zip(self.freqs_mhz, dbm), key=lambda pair: pair[1], reverse=True)[:8]
+        strongest = heapq.nlargest(8, zip(self.freqs_mhz, dbm), key=lambda pair: pair[1])
         text = "RF SUMMARY\n──────────────────────\n\n"
         text += "Median Floor\n"
         text += f"{median_floor:7.2f} dBm\n\n"
@@ -1939,14 +1956,20 @@ class RFBridgeWindow:
             display_freq = snap_display_frequency(freq)
             text += f"{i}. {display_freq:9.3f} MHz  {level:7.2f} dBm\n"
         self.summary_label.setText(text)
-        for marker in self.top_markers:
-            self.plot.removeItem(marker)
-        self.top_markers = []
-        for freq, level in strongest:
-            marker = self.pg.InfiniteLine(pos=freq, angle=90, pen=self.pg.mkPen(self.theme["marker"], width=1, style=self.Qt.DotLine))
+        while len(self.top_markers) < len(strongest):
+            marker = self.pg.InfiniteLine(
+                angle=90,
+                pen=self.pg.mkPen(self.theme["marker"], width=1, style=self.Qt.DotLine),
+            )
             marker.setZValue(-10)
             self.plot.addItem(marker, ignoreBounds=True)
             self.top_markers.append(marker)
+        for marker, (freq, _level) in zip(self.top_markers, strongest):
+            marker.setPen(self.pg.mkPen(self.theme["marker"], width=1, style=self.Qt.DotLine))
+            marker.setPos(freq)
+            marker.setVisible(True)
+        for marker in self.top_markers[len(strongest):]:
+            marker.setVisible(False)
 
     def update_hover_label(self, idx):
         source = self.display_dbm or self.latest_dbm
