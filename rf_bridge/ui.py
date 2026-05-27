@@ -296,8 +296,12 @@ class RFBridgeWindow:
         self.connect_button = QPushButton("Connect")
         self.disconnect_button = QPushButton("Disconnect")
         self.disconnect_button.setEnabled(False)
-        self.version_label = QLabel("Device: —")
-        self.range_label = QLabel("Range: —")
+        self.device_info_label = QLabel("Device: —\nRange: —")
+        self.device_info_label.setObjectName("deviceInfoLabel")
+        self.device_notice_label = QLabel("")
+        self.device_notice_label.setObjectName("deviceNoticeLabel")
+        self.device_notice_label.setWordWrap(True)
+        self.device_notice_label.setVisible(False)
 
         self.port_combo.setMinimumWidth(220)
         self.port_combo.setMaximumWidth(330)
@@ -309,17 +313,16 @@ class RFBridgeWindow:
 
         connection_layout.addWidget(self.status_dot, 0, 0)
         connection_layout.addWidget(self.connection_status, 0, 1, 1, 3)
-        connection_layout.addWidget(QLabel("Port"), 1, 0, 1, 1)
-        connection_layout.addWidget(self.port_combo, 1, 1, 1, 3)
+        connection_layout.addWidget(self.port_combo, 1, 0, 1, 4)
         connection_layout.addWidget(self.connect_button, 2, 0, 1, 1)
         connection_layout.addWidget(self.disconnect_button, 2, 1, 1, 1)
         connection_layout.addWidget(self.refresh_ports_button, 2, 2, 1, 2)
-        connection_layout.addWidget(self.version_label, 3, 0, 1, 4)
-        connection_layout.addWidget(self.range_label, 4, 0, 1, 4)
+        connection_layout.addWidget(self.device_info_label, 3, 0, 1, 4)
+        connection_layout.addWidget(self.device_notice_label, 4, 0, 1, 4)
         connection_layout.setColumnStretch(1, 1)
         connection_panel.setFixedWidth(330)
         connection_panel.setMinimumHeight(160)
-        connection_panel.setMaximumHeight(175)
+        connection_panel.setMaximumHeight(195)
 
         self.overlay_panel = QFrame()
         self.overlay_panel.setObjectName("overlayPanel")
@@ -386,7 +389,7 @@ class RFBridgeWindow:
         self.plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.plot.showGrid(x=True, y=True, alpha=0.25)
         self.plot.setLabel("bottom", "Frequency", units="MHz")
-        self.plot.setLabel("left", "Amplitude", units="dBm")
+        self.plot.setLabel("left", "dBm")
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
         self.lock_plot_axes()
 
@@ -539,7 +542,9 @@ class RFBridgeWindow:
         QLabel#hoverLabel {{ background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 8px; }}
         QLabel#statusLabel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }}
         QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; }}
-        QLabel#connectionStatus {{ font-weight: bold; }}
+        QLabel#connectionStatus {{ font-weight: bold; background: transparent; }}
+        QLabel#deviceInfoLabel {{ color: {t['muted_text']}; background: transparent; font-size: 12px; padding-top: 2px; }}
+        QLabel#deviceNoticeLabel {{ color: {t['disconnected']}; background: transparent; font-size: 12px; padding-top: 2px; }}
         QLabel#overlayHeaderIcon {{ color: {t['text']}; font-size: 26px; font-weight: bold; padding-right: 4px; background: transparent; }}
         QLabel#overlayTitle {{ font-weight: bold; font-family: Menlo, Monaco, Consolas, monospace; font-size: 15px; background: transparent; }}
         QLabel#overlaySubtitle {{ color: {t['muted_text']}; font-size: 12px; background: transparent; }}
@@ -659,6 +664,7 @@ class RFBridgeWindow:
         self.plot.getAxis("bottom").setTextPen(self.theme["axis_text"])
         self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
+        self.plot.setLabel("left", "dBm", color=self.theme["axis_text"])
         self.update_connection_state(self.connected, self.connection_status.text())
         self.render_mic_markers()
         self.render_capture_overlays()
@@ -1288,6 +1294,7 @@ class RFBridgeWindow:
         if not port:
             self.show_error("No serial port selected.")
             return
+        self.clear_device_notice()
         self.selected_port = port
         self.settings.set("last_port", port)
         self.update_connection_state(False, "Connecting…")
@@ -1336,8 +1343,11 @@ class RFBridgeWindow:
         self.lock_plot_axes(preserve_x=True)
         self.cursor_line.setPos(freqs_mhz[0])
         self.render_mic_markers()
-        self.version_label.setText(f"Device: {version or 'tinySA'}")
-        self.range_label.setText(f"Range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz")
+        self.device_info_label.setText(
+            f"Device: {version or 'tinySA'}\n"
+            f"Range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz"
+        )
+        self.clear_device_notice()
         self.update_connection_state(True, f"Connected: {port}")
         self.log(f"Frequency range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz")
 
@@ -1365,6 +1375,9 @@ class RFBridgeWindow:
         if transient_empty_read:
             self.scan_error_count += 1
             self.log("tinySA did not return data yet; leaving the UI open for retry/reconnect")
+            self.show_device_notice(
+                "tinySA is not returning data. Reboot/power-cycle the tinySA, then reconnect."
+            )
             self.update_connection_state(False, "Disconnected — tinySA not ready")
             self.auto_connect_in_progress = False
             self.disconnect_device()
@@ -1390,9 +1403,16 @@ class RFBridgeWindow:
         self.refresh_ports_button.setEnabled(not connected)
         self.port_combo.setEnabled(not connected)
         if not connected:
-            self.version_label.setText("Device: —")
-            self.range_label.setText("Range: —")
+            self.device_info_label.setText("Device: —\nRange: —")
         self.update_status()
+
+    def show_device_notice(self, message):
+        self.device_notice_label.setText(message)
+        self.device_notice_label.setVisible(True)
+
+    def clear_device_notice(self):
+        self.device_notice_label.setText("")
+        self.device_notice_label.setVisible(False)
 
     def show_error(self, message):
         if self.shutting_down:

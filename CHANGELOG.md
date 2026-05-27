@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.9.5.13
+- Cleaned up the tinySA connection panel layout.
+- Added an in-panel notice when the tinySA serial console does not return data.
+- Simplified the RF plot left-axis label to `dBm` to avoid clipped axis lettering.
+
 ## v1.9.5.12
 - Added a conservative tinySA wake sequence before the first `version` command.
 - The wake sequence sends blank lines, `resume`, `release`, and `refresh` with bounded reads.
