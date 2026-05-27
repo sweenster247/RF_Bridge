@@ -18,34 +18,13 @@
 
 RF Bridge is a macOS desktop utility for live sound engineers, RF coordinators, and wireless technicians using a tinySA spectrum analyzer. It captures live RF scans, visualizes the spectrum in real time, and continuously writes Wireless Workbench-compatible CSV files for practical coordination workflows.
 
-## What’s New in v1.9.5.21
+## What’s New in v1.9.5.24
 
-- Batched UI polish for connection/Demo Mode layout stability, larger sidebar navigation text, and a shorter bottom status bar
-- Added live/disconnected device state to the lower left sidebar
-- Added a right-click Peak menu while keeping the existing left-click peak toggle
-- Shortened the RF plot hover readout and rounded hover frequencies to three decimals so it fits cleanly
-- Added low/high frequency range labels directly on the RF plot
-- Stabilized the main window layout so connection and status text changes do not resize the app window
-- Cleaned up tinySA disconnect handling so unplugged/unavailable devices switch back to the reconnect UI
-- Reduced repeated frequency/data mismatch log spam and disconnect after repeated mismatched scans so the range can be refreshed
-- Added more realistic Demo Mode noise, floor movement, and short transient spikes
-- Refined the macOS app icon so the RF Bridge artwork fills more of the icon without the extra outer border
-- Added visual-only Demo Mode to the device dropdown
-- Demo Mode simulates RF activity without writing CSV files or touching `wwb_scans`
-- Cleaned raw tinySA console echoes from the device label
-- Simplified connection actions so connected state shows a single Disconnect button
-- Cleaned up the tinySA connection panel and added an in-panel silent-device notice
-- Simplified the RF plot left-axis label to remove stray clipped lettering
-- Added a conservative tinySA wake sequence before the first `version` command
-- Removed blocking prompt reads and serial flushes from tinySA command handling
-- Added a serial write timeout so USB serial stalls error instead of hanging
-- Added a tinySA command fallback using the standalone diagnostic read strategy
-- Fixed a UI startup regression that stopped auto-connect before the scan worker started
-- Restored the confirmed-working tinySA prompt-based serial read path from v1.9.4.10
-- Kept `--debug-serial` TX/RX logging from v1.9.5.7
-- Hard-locked scan reads to `data 1`
-- Preserved the v1.9.5 sidebar/logo/layout polish
-- Kept graph axis/cursor stability fixes and overlay toggle fixes
+- Matched the top-right connection panel width to the RF Summary panel.
+- Added right-click Refresh options, including a custom refresh interval dialog.
+- Added optional automatic live trace overlays in Preferences without creating extra CSV files.
+- Snapped hover readout and Top RF Hits frequencies to 0.005 MHz increments.
+- Added a little more spacing between right-side control icons and labels.
 
 ## Features
 
@@ -54,7 +33,7 @@ RF Bridge is a macOS desktop utility for live sound engineers, RF coordinators, 
 - Adjustable refresh intervals
 - Peak hold modes
 - Freeze Trace mode
-- RF summary display
+- RF summary display with Top RF Hits rounded to practical 0.005 MHz steps
 
 ### tinySA Integration
 - Automatic tinySA detection
@@ -149,8 +128,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.5.21-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.5.21-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.5.24-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.5.24-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

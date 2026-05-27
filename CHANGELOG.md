@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.9.5.24
+- Matched the top-right connection panel width to the RF Summary panel.
+- Added right-click refresh options with a custom refresh interval dialog.
+- Added optional automatic live trace overlays from Preferences, capped to the latest six auto traces and without creating extra CSV files.
+- Snapped hover readout and Top RF Hits frequency display to 0.005 MHz increments.
+- Added a little extra spacing between right-side control icons and labels.
+- Updated version metadata and README for v1.9.5.24.
+
+## v1.9.5.23
+
+- Replaced emoji-style sidebar controls with clean SVG icons.
+- Added icon assets for Peak, Reset, Refresh, Freeze, and Return to Live.
+- Kept the compact v1.9.5.22 right-sidebar layout while improving visual polish.
+
+## v1.9.5.23
+- Refined the right RF summary sidebar to reduce Top 8 clipping/crowding.
+- Widened the RF panel slightly and converted Peak/Reset plus Refresh/Freeze into compact side-by-side control rows.
+- Reduced sidebar button and hover inspector height, shortened labels, and added lightweight icons for a cleaner utility-app feel.
+
 ## v1.9.5.21
 - Batched UI polish for connection stability, Demo Mode layout stability, larger sidebar navigation text, and a shorter bottom status bar.
 - Added live/disconnected device state to the lower left sidebar.

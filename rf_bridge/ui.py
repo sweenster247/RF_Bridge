@@ -21,6 +21,8 @@ from .version import __version__
 
 REFRESH_MODES = [0.5, 1, 2, 5, 10]
 MAX_CONSECUTIVE_SCAN_MISMATCHES = 3
+MAX_AUTO_TRACE_OVERLAYS = 6
+FREQUENCY_DISPLAY_STEP_MHZ = 0.005
 DEVICE_UNAVAILABLE_MARKERS = (
     "device not configured",
     "no such file",
@@ -121,10 +123,14 @@ def format_seconds(seconds):
     return str(seconds)
 
 
+def snap_display_frequency(freq_mhz):
+    return round(freq_mhz / FREQUENCY_DISPLAY_STEP_MHZ) * FREQUENCY_DISPLAY_STEP_MHZ
+
+
 class RFBridgeWindow:
     def __init__(self, output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None, debug_serial=False):
         from PySide6.QtCore import Qt, QThread, Signal, QMetaObject, Q_ARG, QTimer, QSize
-        from PySide6.QtGui import QAction, QPixmap
+        from PySide6.QtGui import QAction, QIcon, QPixmap
         from PySide6.QtWidgets import (
             QApplication,
             QCheckBox,
@@ -179,6 +185,7 @@ class RFBridgeWindow:
         self.capture_overlay_actions = []
         self.overlay_checkbox_widgets = []
         self.overlay_color_index = 0
+        self.last_auto_trace_time = 0
         self.scan_error_count = 0
         self.scan_mismatch_count = 0
         self.auto_connect_in_progress = False
@@ -195,6 +202,8 @@ class RFBridgeWindow:
         self.demo_mode = False
         self.port_map = {}
         self.settings = AppSettings()
+        self.auto_trace_enabled = self.settings.get_bool("auto_trace_enabled", False)
+        self.auto_trace_minutes = max(1.0, self.settings.get_float("auto_trace_minutes", 10.0))
         self.appearance = self.settings.get_appearance()
         self.theme_name = self.resolve_theme_name(self.appearance)
         self.theme = THEMES[self.theme_name]
@@ -210,7 +219,7 @@ class RFBridgeWindow:
             range(len(REFRESH_MODES)),
             key=lambda index: abs(REFRESH_MODES[index] - saved_refresh),
         )
-        self.refresh_seconds = REFRESH_MODES[self.refresh_index]
+        self.refresh_seconds = float(saved_refresh)
         self.selected_port = selected_port or self.settings.get("last_port", None)
 
         self.app = QApplication.instance() or QApplication([])
@@ -363,7 +372,7 @@ class RFBridgeWindow:
         connection_layout.addWidget(self.device_info_label, 3, 0, 1, 4)
         connection_layout.addWidget(self.device_notice_label, 4, 0, 1, 4)
         connection_layout.setColumnStretch(1, 1)
-        connection_panel.setFixedWidth(330)
+        connection_panel.setFixedWidth(360)
         connection_panel.setFixedHeight(195)
 
         self.overlay_panel = QFrame()
@@ -458,10 +467,13 @@ class RFBridgeWindow:
 
         side_panel = QFrame()
         side_panel.setObjectName("sidePanel")
-        side_panel.setFixedWidth(330)
+        # Give the RF summary / Top 8 readout a little more horizontal room.
+        # This prevents clipping on macOS when labels, DPI scaling, or font
+        # rendering make the right sidebar slightly tighter than expected.
+        side_panel.setFixedWidth(360)
         side_layout = QVBoxLayout(side_panel)
         side_layout.setContentsMargins(12, 12, 12, 12)
-        side_layout.setSpacing(12)
+        side_layout.setSpacing(10)
 
         self.summary_label = QLabel("RF SUMMARY\n──────────────────────\n\nConnect to tinySA to begin.")
         self.summary_label.setObjectName("summaryLabel")
@@ -474,25 +486,49 @@ class RFBridgeWindow:
         # Keep the hover readout from asking Qt's layout system for more height
         # as the cursor moves. Without this, vertical mouse movement over the
         # graph can make the main window grow unexpectedly on macOS.
-        self.hover_label.setMinimumHeight(82)
-        self.hover_label.setMaximumHeight(96)
+        self.hover_label.setMinimumHeight(72)
+        self.hover_label.setMaximumHeight(84)
 
-        self.peak_button = QPushButton("Peak: OFF")
+        self.peak_button = QPushButton("  Peak OFF")
+        self.peak_button.setToolTip("Cycle peak hold mode. Right-click for all peak options.")
         self.peak_button.setContextMenuPolicy(self.Qt.CustomContextMenu)
-        self.reset_button = QPushButton("Reset Peaks")
-        self.refresh_button = QPushButton(f"Refresh: {format_seconds(self.refresh_seconds)}s")
-        self.freeze_button = QPushButton("Freeze: OFF")
-        self.return_live_button = QPushButton("Return to Live")
+        self.reset_button = QPushButton("  Reset")
+        self.reset_button.setToolTip("Clear peak hold data")
+        self.refresh_button = QPushButton(f"  {format_seconds(self.refresh_seconds)}s")
+        self.refresh_button.setToolTip("Cycle scan refresh interval. Right-click for all refresh options.")
+        self.refresh_button.setContextMenuPolicy(self.Qt.CustomContextMenu)
+        self.freeze_button = QPushButton("  Freeze")
+        self.freeze_button.setToolTip("Freeze or resume the live trace")
+        self.return_live_button = QPushButton("  Return to Live")
+        self.return_live_button.setToolTip("Return the graph to the live trace")
         self.return_live_button.setEnabled(False)
-        for button in (self.peak_button, self.reset_button, self.refresh_button, self.freeze_button, self.return_live_button):
-            button.setMinimumHeight(42)
+
+        control_icons = (
+            (self.peak_button, "icons/icon-peak.svg"),
+            (self.reset_button, "icons/icon-reset.svg"),
+            (self.refresh_button, "icons/icon-refresh.svg"),
+            (self.freeze_button, "icons/icon-freeze.svg"),
+            (self.return_live_button, "icons/icon-play.svg"),
+        )
+        for button, icon_name in control_icons:
+            button.setMinimumHeight(34)
+            button.setIcon(QIcon(self.asset_path(icon_name)))
+            button.setIconSize(QSize(22, 22))
+
+        peak_row = QHBoxLayout()
+        peak_row.setSpacing(8)
+        peak_row.addWidget(self.peak_button)
+        peak_row.addWidget(self.reset_button)
+
+        live_row = QHBoxLayout()
+        live_row.setSpacing(8)
+        live_row.addWidget(self.refresh_button)
+        live_row.addWidget(self.freeze_button)
 
         side_layout.addWidget(self.summary_label, stretch=1)
         side_layout.addWidget(self.hover_label)
-        side_layout.addWidget(self.peak_button)
-        side_layout.addWidget(self.reset_button)
-        side_layout.addWidget(self.refresh_button)
-        side_layout.addWidget(self.freeze_button)
+        side_layout.addLayout(peak_row)
+        side_layout.addLayout(live_row)
         side_layout.addWidget(self.return_live_button)
 
         content_layout.addWidget(self.plot, stretch=1)
@@ -526,6 +562,7 @@ class RFBridgeWindow:
         self.peak_button.customContextMenuRequested.connect(self.show_peak_menu)
         self.reset_button.clicked.connect(self.reset_peaks)
         self.refresh_button.clicked.connect(self.toggle_refresh)
+        self.refresh_button.customContextMenuRequested.connect(self.show_refresh_menu)
         self.freeze_button.clicked.connect(self.toggle_freeze)
         self.return_live_button.clicked.connect(self.return_to_live)
         self.open_overlay_button.clicked.connect(self.open_capture_overlays)
@@ -748,7 +785,7 @@ class RFBridgeWindow:
         self.loaded_capture = capture
         self.capture_mode = True
         self.frozen = False
-        self.freeze_button.setText("Freeze: OFF")
+        self.freeze_button.setText("Freeze")
         self.return_live_button.setEnabled(bool(self.latest_dbm and self.live_freqs_mhz))
         self.freqs_mhz = capture["freqs_mhz"]
         self.display_dbm = capture["dbm"]
@@ -790,6 +827,37 @@ class RFBridgeWindow:
         self.render_scan(self.latest_dbm)
         self.log("Returned to live trace")
         self.update_status()
+
+    def add_auto_trace_overlay(self, freqs_mhz, dbm, now=None):
+        if now is None:
+            now = time.time()
+        capture = {
+            "name": f"Auto Trace {time_12h()}",
+            "path": None,
+            "freqs_mhz": list(freqs_mhz),
+            "dbm": list(dbm),
+            "visible": True,
+            "color": self.next_overlay_color(),
+            "auto_trace": True,
+        }
+        self.capture_overlays.append(capture)
+        auto_indexes = [
+            index
+            for index, item in enumerate(self.capture_overlays)
+            if item.get("auto_trace")
+        ]
+        while len(auto_indexes) > MAX_AUTO_TRACE_OVERLAYS:
+            remove_index = auto_indexes.pop(0)
+            self.capture_overlays.pop(remove_index)
+            auto_indexes = [
+                index
+                for index, item in enumerate(self.capture_overlays)
+                if item.get("auto_trace")
+            ]
+        self.last_auto_trace_time = now
+        self.render_capture_overlays()
+        self.rebuild_overlay_menu()
+        self.log(f"Auto trace overlay added: {capture['name']}")
 
 
     def next_overlay_color(self):
@@ -1235,9 +1303,11 @@ class RFBridgeWindow:
 
     def open_preferences(self):
         from PySide6.QtWidgets import (
+            QCheckBox,
             QComboBox,
             QDialog,
             QDialogButtonBox,
+            QDoubleSpinBox,
             QFileDialog,
             QFormLayout,
             QHBoxLayout,
@@ -1262,6 +1332,9 @@ class RFBridgeWindow:
         for value in REFRESH_MODES:
             refresh_combo.addItem(f"{format_seconds(value)} seconds", value)
         refresh_index = refresh_combo.findData(self.refresh_seconds)
+        if refresh_index < 0:
+            refresh_combo.addItem(f"Custom ({format_seconds(self.refresh_seconds)} seconds)", self.refresh_seconds)
+            refresh_index = refresh_combo.findData(self.refresh_seconds)
         if refresh_index >= 0:
             refresh_combo.setCurrentIndex(refresh_index)
 
@@ -1270,6 +1343,15 @@ class RFBridgeWindow:
         storage_row = QHBoxLayout()
         storage_row.addWidget(storage_edit, stretch=1)
         storage_row.addWidget(browse_button)
+
+        auto_trace_checkbox = QCheckBox("Add current live trace to overlays automatically")
+        auto_trace_checkbox.setChecked(self.auto_trace_enabled)
+        auto_trace_minutes = QDoubleSpinBox()
+        auto_trace_minutes.setRange(1.0, 120.0)
+        auto_trace_minutes.setDecimals(1)
+        auto_trace_minutes.setSingleStep(1.0)
+        auto_trace_minutes.setSuffix(" min")
+        auto_trace_minutes.setValue(self.auto_trace_minutes)
 
         def choose_folder():
             selected = QFileDialog.getExistingDirectory(
@@ -1285,8 +1367,12 @@ class RFBridgeWindow:
         form.addRow("Appearance", appearance_combo)
         form.addRow("Default refresh", refresh_combo)
         form.addRow("Default storage", storage_row)
+        form.addRow("Auto trace overlays", auto_trace_checkbox)
+        form.addRow("Auto trace interval", auto_trace_minutes)
 
-        note = QLabel("Storage changes apply to new app sessions. Current scan output stays where this session started.")
+        note = QLabel(
+            "Storage changes apply to new app sessions. Auto trace overlays use the live scan in memory and do not create extra CSV files."
+        )
         note.setWordWrap(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1304,9 +1390,17 @@ class RFBridgeWindow:
         self.appearance = appearance_combo.currentText()
         self.settings.set_appearance(self.appearance)
         self.settings.set_storage_root(storage_edit.text().strip() or self.settings.default_storage_root())
+        self.auto_trace_enabled = auto_trace_checkbox.isChecked()
+        self.auto_trace_minutes = float(auto_trace_minutes.value())
+        self.settings.set("auto_trace_enabled", self.auto_trace_enabled)
+        self.settings.set("auto_trace_minutes", self.auto_trace_minutes)
         self.set_refresh_interval(float(refresh_combo.currentData()))
         self.apply_theme()
-        self.log(f"Preferences saved: appearance={self.appearance}, storage={self.settings.get_storage_root()}")
+        self.log(
+            f"Preferences saved: appearance={self.appearance}, "
+            f"storage={self.settings.get_storage_root()}, "
+            f"auto_trace={'on' if self.auto_trace_enabled else 'off'}"
+        )
 
     def log(self, message):
         self.log_box.append(f"[{time_12h()}] {message}")
@@ -1663,7 +1757,7 @@ class RFBridgeWindow:
     def set_refresh_interval(self, seconds):
         self.refresh_seconds = seconds
         self.settings.set("refresh_seconds", seconds)
-        self.refresh_button.setText(f"Refresh: {format_seconds(seconds)}s")
+        self.refresh_button.setText(f"  {format_seconds(seconds)}s")
         if self.demo_timer is not None:
             self.demo_timer.start(int(seconds * 1000))
         if self.worker is not None:
@@ -1677,12 +1771,45 @@ class RFBridgeWindow:
         self.update_status()
 
     def toggle_refresh(self):
+        self.refresh_index = min(
+            range(len(REFRESH_MODES)),
+            key=lambda index: abs(REFRESH_MODES[index] - self.refresh_seconds),
+        )
         self.refresh_index = (self.refresh_index + 1) % len(REFRESH_MODES)
         self.set_refresh_interval(REFRESH_MODES[self.refresh_index])
 
+    def show_refresh_menu(self, position):
+        from PySide6.QtWidgets import QInputDialog
+
+        menu = self.QMenu(self.window)
+        for value in REFRESH_MODES:
+            label = f"{format_seconds(value)} seconds"
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(abs(value - self.refresh_seconds) < 0.001)
+            action.triggered.connect(lambda _checked=False, seconds=value: self.set_refresh_interval(seconds))
+        menu.addSeparator()
+        custom_action = menu.addAction("Custom…")
+
+        def choose_custom():
+            value, ok = QInputDialog.getDouble(
+                self.window,
+                "Custom Refresh",
+                "Refresh interval in seconds:",
+                float(self.refresh_seconds),
+                0.1,
+                3600.0,
+                1,
+            )
+            if ok:
+                self.set_refresh_interval(float(value))
+
+        custom_action.triggered.connect(choose_custom)
+        menu.exec(self.refresh_button.mapToGlobal(position))
+
     def toggle_freeze(self):
         self.frozen = not self.frozen
-        self.freeze_button.setText(f"Freeze: {'ON' if self.frozen else 'OFF'}")
+        self.freeze_button.setText("  Resume" if self.frozen else "  Freeze")
         self.log("Trace frozen" if self.frozen else "Trace resumed")
         if not self.frozen and self.latest_dbm and self.freqs_mhz:
             self.render_scan(self.latest_dbm)
@@ -1704,7 +1831,7 @@ class RFBridgeWindow:
         self.peak_mode_index = index % len(PEAK_MODES)
         self.settings.set("peak_mode_index", self.peak_mode_index)
         label, window_seconds = PEAK_MODES[self.peak_mode_index]
-        self.peak_button.setText(f"Peak: {label}")
+        self.peak_button.setText(f"  Peak {label}")
         if label == "OFF":
             self.peak_enabled = False
             self.peak_hold = None
@@ -1724,7 +1851,7 @@ class RFBridgeWindow:
         self.peak_mode_index = 0
         self.peak_hold = None
         self.peak_history = []
-        self.peak_button.setText("Peak: OFF")
+        self.peak_button.setText("  Peak OFF")
         self.peak_curve.setData([], [])
         self.update_hover_label(None)
 
@@ -1757,6 +1884,11 @@ class RFBridgeWindow:
             if not self.frozen:
                 self.render_scan(dbm)
         now = time.time()
+        if self.auto_trace_enabled and not self.capture_mode:
+            if not self.last_auto_trace_time:
+                self.last_auto_trace_time = now
+            elif now - self.last_auto_trace_time >= self.auto_trace_minutes * 60:
+                self.add_auto_trace_overlay(live_freqs, dbm, now=now)
         if now - self.last_save_time >= SCAN_INTERVAL_SECONDS:
             filename, latest_filename = save_wwb_csv(self.output_dir, self.gig_slug, live_freqs, dbm)
             self.last_save_time = now
@@ -1804,7 +1936,8 @@ class RFBridgeWindow:
         text += f"{median_floor:7.2f} dBm\n\n"
         text += "TOP 8 RF HITS\n──────────────────────\n"
         for i, (freq, level) in enumerate(strongest, start=1):
-            text += f"{i}. {freq:9.3f} MHz  {level:7.2f} dBm\n"
+            display_freq = snap_display_frequency(freq)
+            text += f"{i}. {display_freq:9.3f} MHz  {level:7.2f} dBm\n"
         self.summary_label.setText(text)
         for marker in self.top_markers:
             self.plot.removeItem(marker)
@@ -1822,6 +1955,7 @@ class RFBridgeWindow:
             return
         nearest_freq = self.freqs_mhz[idx]
         nearest_level = source[idx]
+        display_freq = snap_display_frequency(nearest_freq)
         if self.capture_mode and self.loaded_capture:
             mode_text = "\nMode: Capture"
         else:
@@ -1829,13 +1963,13 @@ class RFBridgeWindow:
         if self.peak_hold:
             nearest_peak = self.peak_hold[idx]
             self.hover_label.setText(
-                f"{nearest_freq:.3f} MHz\n"
+                f"{display_freq:.3f} MHz\n"
                 f"Live: {nearest_level:.2f} dBm\n"
                 f"Peak: {nearest_peak:.2f} dBm{mode_text}"
             )
         else:
             self.hover_label.setText(
-                f"{nearest_freq:.3f} MHz\n"
+                f"{display_freq:.3f} MHz\n"
                 f"Live: {nearest_level:.2f} dBm{mode_text}"
             )
 
@@ -1875,10 +2009,11 @@ class RFBridgeWindow:
             freeze_label = "Frozen" if self.frozen else "Live"
         device_label = self.selected_port or "not connected"
         overlay_count = sum(1 for capture in self.capture_overlays if capture.get("visible", True))
+        auto_label = "on" if self.auto_trace_enabled else "off"
         if self.demo_mode:
             self.status_label.setText(
                 f"Mode: {freeze_label}   |   CSV: disabled   |   "
-                f"Refresh: {format_seconds(self.refresh_seconds)}s   |   Overlays: {overlay_count}"
+                f"Refresh: {format_seconds(self.refresh_seconds)}s   |   Overlays: {overlay_count}   |   Auto: {auto_label}"
             )
             return
         folder_label = os.path.basename(os.path.normpath(self.output_dir)) or self.output_dir
@@ -1886,7 +2021,7 @@ class RFBridgeWindow:
         self.status_label.setText(
             f"Folder: {folder_label}   |   Latest: {latest_label}   |   "
             f"Next: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
-            f"Mode: {freeze_label}   |   Overlays: {overlay_count}"
+            f"Mode: {freeze_label}   |   Overlays: {overlay_count}   |   Auto: {auto_label}"
         )
 
     def handle_close_event(self, event):
