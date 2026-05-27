@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.9.5.15
+- Added visual-only Demo Mode to the device dropdown.
+- Demo Mode simulates RF graph activity without writing CSV files or touching `wwb_scans`.
+
 ## v1.9.5.14
 - Cleaned raw tinySA console echo/prompt text from the device label.
 - Simplified the connection card action row so connected state shows one Disconnect action.

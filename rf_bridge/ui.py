@@ -2,7 +2,9 @@
 
 import bisect
 import json
+import math
 import os
+import random
 import time
 import webbrowser
 
@@ -72,6 +74,7 @@ THEMES = {
 }
 
 APPEARANCE_OPTIONS = ["System", "Dark", "Light"]
+DEMO_PORT = "__rf_bridge_demo__"
 
 # Fixed RF display range. Keep the graph from re-scaling when the tinySA
 # connects, when live data arrives, or when guide/marker items are refreshed.
@@ -172,6 +175,9 @@ class RFBridgeWindow:
         self.connected = False
         self.worker_thread = None
         self.worker = None
+        self.demo_timer = None
+        self.demo_phase = 0.0
+        self.demo_mode = False
         self.port_map = {}
         self.settings = AppSettings()
         self.appearance = self.settings.get_appearance()
@@ -1260,6 +1266,7 @@ class RFBridgeWindow:
         current = self.port_combo.currentData() or self.selected_port
         self.port_combo.clear()
         self.port_map = {}
+        self.port_combo.addItem("Demo Mode — simulated RF scan", DEMO_PORT)
         ports = candidate_serial_ports()
         for port in ports:
             label = describe_port(port)
@@ -1297,6 +1304,11 @@ class RFBridgeWindow:
             self.show_error("No serial port selected.")
             return
         self.clear_device_notice()
+
+        if port == DEMO_PORT:
+            self.start_demo_mode()
+            return
+
         self.selected_port = port
         self.settings.set("last_port", port)
         self.update_connection_state(False, "Connecting…")
@@ -1319,6 +1331,10 @@ class RFBridgeWindow:
         self.log(f"Connecting to {port}")
 
     def disconnect_device(self):
+        if self.demo_mode:
+            self.stop_demo_mode()
+            return
+
         if self.worker is not None:
             self.QMetaObject.invokeMethod(
                 self.worker,
@@ -1331,6 +1347,77 @@ class RFBridgeWindow:
     def clear_worker_refs(self):
         self.worker = None
         self.worker_thread = None
+
+    def start_demo_mode(self):
+        self.demo_mode = True
+        self.connected = True
+        self.selected_port = "Demo Mode"
+        self.freqs_mhz = [
+            470.0 + (index * (90.0 / 449))
+            for index in range(450)
+        ]
+        self.live_freqs_mhz = self.freqs_mhz.copy()
+        self.latest_dbm = []
+        self.display_dbm = []
+        self.demo_phase = 0.0
+        self.reset_peaks()
+        self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
+        self.lock_plot_axes(preserve_x=True)
+        self.cursor_line.setPos(self.freqs_mhz[0])
+        self.device_info_label.setText("Device: Demo Mode\nRange: 470.000–560.000 MHz")
+        self.show_device_notice("Demo Mode is visual only. No CSV files are written.")
+        self.update_connection_state(True, "Demo Mode")
+        self.log("Demo Mode started; CSV export disabled")
+
+        self.demo_timer = self.QTimer(self.window)
+        self.demo_timer.timeout.connect(self.generate_demo_scan)
+        self.demo_timer.start(int(self.refresh_seconds * 1000))
+        self.generate_demo_scan()
+
+    def stop_demo_mode(self):
+        if self.demo_timer is not None:
+            self.demo_timer.stop()
+            self.demo_timer.deleteLater()
+            self.demo_timer = None
+        self.demo_mode = False
+        self.connected = False
+        self.selected_port = None
+        self.latest_dbm = []
+        self.display_dbm = []
+        self.live_freqs_mhz = []
+        self.freqs_mhz = []
+        self.live_curve.setData([], [])
+        self.peak_curve.setData([], [])
+        self.clear_device_notice()
+        self.update_top_frequencies([])
+        self.update_connection_state(False)
+        self.log("Demo Mode stopped")
+
+    def generate_demo_scan(self):
+        if not self.demo_mode or not self.freqs_mhz:
+            return
+
+        self.demo_phase += 0.28
+        peaks = [
+            (482.125, -48, 0.18),
+            (506.500, -56, 0.28),
+            (537.875, -51, 0.22),
+        ]
+        dbm = []
+        for freq in self.freqs_mhz:
+            floor = -94 + 2.5 * math.sin((freq * 0.11) + self.demo_phase)
+            level = floor + random.uniform(-1.8, 1.8)
+            for center, peak_level, width in peaks:
+                drift = 0.035 * math.sin(self.demo_phase + center)
+                strength = math.exp(-((freq - center - drift) ** 2) / (2 * width * width))
+                level = max(level, peak_level * strength + floor * (1 - strength))
+            dbm.append(level)
+
+        self.latest_dbm = dbm
+        self.freqs_mhz = self.live_freqs_mhz
+        if not self.frozen:
+            self.render_scan(dbm)
+        self.update_status()
 
     def on_connected(self, port, version, freqs_mhz):
         self.auto_connect_in_progress = False
@@ -1441,6 +1528,8 @@ class RFBridgeWindow:
         self.refresh_seconds = seconds
         self.settings.set("refresh_seconds", seconds)
         self.refresh_button.setText(f"Refresh: {format_seconds(seconds)}s")
+        if self.demo_timer is not None:
+            self.demo_timer.start(int(seconds * 1000))
         if self.worker is not None:
             self.QMetaObject.invokeMethod(
                 self.worker,
@@ -1539,6 +1628,13 @@ class RFBridgeWindow:
         self.plot.setTitle(f"RF Bridge - {self.gig_slug} - {time_12h()}", color=self.theme["text"], size="16pt")
 
     def update_top_frequencies(self, dbm):
+        if not dbm:
+            self.summary_label.setText("RF SUMMARY\n──────────────────────\n\nConnect to tinySA to begin.")
+            for marker in self.top_markers:
+                self.plot.removeItem(marker)
+            self.top_markers = []
+            return
+
         median_floor = sorted(dbm)[len(dbm) // 2]
         strongest = sorted(zip(self.freqs_mhz, dbm), key=lambda pair: pair[1], reverse=True)[:8]
         text = "RF SUMMARY\n──────────────────────\n\n"
@@ -1604,13 +1700,23 @@ class RFBridgeWindow:
         seconds = next_save % 60
         if self.capture_mode and self.loaded_capture:
             freeze_label = f"Loaded Capture: {self.loaded_capture['name']}"
+        elif self.demo_mode:
+            freeze_label = "Demo"
         else:
             freeze_label = "Frozen" if self.frozen else "Live"
+        device_label = self.selected_port or "not connected"
         overlay_count = sum(1 for capture in self.capture_overlays if capture.get("visible", True))
+        if self.demo_mode:
+            self.status_label.setText(
+                f"Scan Folder: disabled in Demo Mode   |   Latest: disabled   |   "
+                f"Next Save: --   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
+                f"Mode: {freeze_label}   |   Overlays: {overlay_count}   |   tinySA: {device_label}"
+            )
+            return
         self.status_label.setText(
             f"Scan Folder: {self.output_dir}   |   Latest: latest_scan.csv   |   "
             f"Next Save: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
-            f"Mode: {freeze_label}   |   Overlays: {overlay_count}   |   tinySA: {self.selected_port or 'not connected'}"
+            f"Mode: {freeze_label}   |   Overlays: {overlay_count}   |   tinySA: {device_label}"
         )
 
     def handle_close_event(self, event):
