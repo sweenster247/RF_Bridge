@@ -108,7 +108,7 @@ def prompt_gig_name_gui(default_name="RF Bridge Scan"):
     text, ok = QInputDialog.getText(
         None,
         "RF Bridge",
-        "Gig/session name:",
+        "Session Name:",
         text="",
     )
 

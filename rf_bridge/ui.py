@@ -93,8 +93,11 @@ DEMO_PORT = "__rf_bridge_demo__"
 # Fixed RF display range. Keep the graph from re-scaling when the tinySA
 # connects, when live data arrives, or when guide/marker items are refreshed.
 RF_Y_MIN = -110
-RF_Y_MAX = -20
+RF_Y_MAX = -10
 RF_Y_RANGE = RF_Y_MAX - RF_Y_MIN
+MIC_MARKER_HIT_RADIUS_MHZ = 0.25
+MIC_MARKER_LABEL_LANES = [-28, -40, -52, -64]
+MIC_MARKER_LABEL_CLUSTER_MHZ = 0.35
 
 
 class UiBridgeFactory:
@@ -443,6 +446,7 @@ class RFBridgeWindow:
         self.plot.setLabel("bottom", "Frequency", units="MHz")
         self.plot.setLabel("left", "dBm")
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
+        self.plot.getPlotItem().setMenuEnabled(False)
         self.lock_plot_axes()
 
         axis_pen = pg.mkPen(self.theme["axis"])
@@ -450,6 +454,7 @@ class RFBridgeWindow:
         self.plot.getAxis("left").setPen(axis_pen)
         self.plot.getAxis("bottom").setTextPen(self.theme["axis_text"])
         self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
+        self.plot.getAxis("left").setTickSpacing(major=10, minor=5)
 
         self.live_curve = self.plot.plot([], [], pen=pg.mkPen("#00ff99", width=2), name="Live")
         self.peak_curve = self.plot.plot([], [], pen=pg.mkPen("#ff3333", width=1.5), name="Peak Hold")
@@ -574,6 +579,7 @@ class RFBridgeWindow:
         self.preferences_nav_button.clicked.connect(self.open_preferences)
         self.about_nav_button.clicked.connect(self.open_about)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_move)
+        self.plot.scene().sigMouseClicked.connect(self.on_plot_mouse_click)
         self.window.destroyed.connect(self.shutdown)
 
         self.populate_ports()
@@ -684,6 +690,7 @@ class RFBridgeWindow:
         self.plot.disableAutoRange()
         self.plot.enableAutoRange(x=False, y=False)
         self.plot.setYRange(RF_Y_MIN, RF_Y_MAX, padding=0)
+        self.plot.getViewBox().setYRange(RF_Y_MIN, RF_Y_MAX, padding=0)
 
         if not preserve_x and self.freqs_mhz:
             self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
@@ -1045,12 +1052,12 @@ class RFBridgeWindow:
         from PySide6.QtWidgets import QFileDialog, QInputDialog
         from .utils import safe_name
 
-        gig_name, ok = QInputDialog.getText(self.window, "New Gig Profile", "Gig/session name:", text="")
+        gig_name, ok = QInputDialog.getText(self.window, "New Gig Profile", "Session Name:", text="")
         if not ok:
             return
         gig_name = gig_name.strip()
         if not gig_name:
-            self.show_error("Gig/session name is required.")
+            self.show_error("Session Name is required.")
             return
 
         storage_root = QFileDialog.getExistingDirectory(
@@ -1280,6 +1287,145 @@ class RFBridgeWindow:
         self.render_mic_markers()
         self.log(f"Mic plot updated: {len(self.mic_markers)} marker(s)")
 
+    def plot_frequency_from_scene_pos(self, scene_pos):
+        if not getattr(self, "plot", None):
+            return None
+
+        plot_item = self.plot.getPlotItem()
+        view_box = plot_item.vb
+        if not view_box.sceneBoundingRect().contains(scene_pos):
+            return None
+
+        mouse_point = view_box.mapSceneToView(scene_pos)
+        freq = float(mouse_point.x())
+        if self.freqs_mhz:
+            freq = max(min(self.freqs_mhz), min(max(self.freqs_mhz), freq))
+        return snap_display_frequency(freq)
+
+    def nearest_mic_marker(self, freq_mhz):
+        visible_markers = [
+            (index, marker)
+            for index, marker in enumerate(self.mic_markers)
+            if marker.get("visible", True)
+        ]
+        if not visible_markers:
+            return None, None
+
+        nearest_index, nearest_marker = min(
+            visible_markers,
+            key=lambda item: abs(float(item[1]["frequency_mhz"]) - freq_mhz),
+        )
+        if self.freqs_mhz:
+            span = max(self.freqs_mhz) - min(self.freqs_mhz)
+        else:
+            span = 0
+        hit_radius = max(MIC_MARKER_HIT_RADIUS_MHZ, span * 0.003)
+        if abs(float(nearest_marker["frequency_mhz"]) - freq_mhz) <= hit_radius:
+            return nearest_index, nearest_marker
+        return None, None
+
+    def on_plot_mouse_click(self, event):
+        if event.button() != self.Qt.RightButton:
+            return
+
+        freq = self.plot_frequency_from_scene_pos(event.scenePos())
+        if freq is None:
+            return
+
+        event.accept()
+        marker_index, marker = self.nearest_mic_marker(freq)
+
+        from PySide6.QtGui import QCursor
+
+        menu = self.QMenu(self.window)
+        if marker is not None:
+            remove_action = menu.addAction(f"Remove Marker: {marker['name']}")
+            remove_action.triggered.connect(
+                lambda _checked=False, index=marker_index: self.remove_mic_marker(index)
+            )
+            menu.addSeparator()
+
+        add_action = menu.addAction(f"Add Mic Marker at {freq:.3f} MHz...")
+        add_action.triggered.connect(
+            lambda _checked=False, marker_freq=freq: self.prompt_add_mic_marker(marker_freq)
+        )
+        menu.exec(QCursor.pos())
+
+    def prompt_add_mic_marker(self, freq_mhz):
+        from PySide6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(
+            self.window,
+            "Add Mic Marker",
+            f"Marker name for {freq_mhz:.3f} MHz:",
+            text="",
+        )
+        if not ok:
+            return
+
+        name = name.strip()
+        if not name:
+            self.show_error("Marker name is required.")
+            return
+
+        color = MARKER_COLORS[len(self.mic_markers) % len(MARKER_COLORS)][1]
+        try:
+            self.mic_markers = save_markers(
+                self.settings,
+                self.mic_markers + [{
+                    "name": name,
+                    "frequency_mhz": freq_mhz,
+                    "color": color,
+                    "visible": True,
+                }],
+            )
+        except ValueError as exc:
+            self.show_error(str(exc))
+            return
+
+        self.render_mic_markers()
+        self.log(f"Mic marker added: {name} at {freq_mhz:.3f} MHz")
+
+    def remove_mic_marker(self, marker_index):
+        if not (0 <= marker_index < len(self.mic_markers)):
+            return
+
+        marker = self.mic_markers[marker_index]
+        self.mic_markers = save_markers(
+            self.settings,
+            [
+                item
+                for index, item in enumerate(self.mic_markers)
+                if index != marker_index
+            ],
+        )
+        self.render_mic_markers()
+        self.log(f"Mic marker removed: {marker['name']}")
+
+    def mic_marker_label_positions(self, visible_markers):
+        placements = {}
+        lane_last_freqs = [None] * len(MIC_MARKER_LABEL_LANES)
+
+        for index, marker in sorted(
+            visible_markers,
+            key=lambda item: float(item[1]["frequency_mhz"]),
+        ):
+            freq = float(marker["frequency_mhz"])
+            lane_index = 0
+            for candidate, last_freq in enumerate(lane_last_freqs):
+                if last_freq is None or abs(freq - last_freq) > MIC_MARKER_LABEL_CLUSTER_MHZ:
+                    lane_index = candidate
+                    break
+            else:
+                lane_index = min(
+                    range(len(lane_last_freqs)),
+                    key=lambda candidate: lane_last_freqs[candidate] or 0,
+                )
+            lane_last_freqs[lane_index] = freq
+            placements[index] = MIC_MARKER_LABEL_LANES[lane_index]
+
+        return placements
+
     def render_mic_markers(self):
         for item in self.mic_marker_items:
             try:
@@ -1291,7 +1437,14 @@ class RFBridgeWindow:
         if not getattr(self, "plot", None):
             return
 
-        for marker in self.mic_markers:
+        visible_markers = [
+            (index, marker)
+            for index, marker in enumerate(self.mic_markers)
+            if marker.get("visible", True)
+        ]
+        label_positions = self.mic_marker_label_positions(visible_markers)
+
+        for index, marker in visible_markers:
             if not marker.get("visible", True):
                 continue
             freq = float(marker["frequency_mhz"])
@@ -1312,7 +1465,8 @@ class RFBridgeWindow:
             )
             # Place mic plot labels slightly below the top of the graph so
             # labels remain visible instead of clipping against the title area.
-            label.setPos(freq, -32)
+            # Nearby markers use staggered lanes so labels stay readable.
+            label.setPos(freq, label_positions.get(index, MIC_MARKER_LABEL_LANES[0]))
             label.setZValue(20)
             self.plot.addItem(line, ignoreBounds=True)
             self.plot.addItem(label, ignoreBounds=True)

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.9.6
+- Added a graph right-click menu for creating Mic Plot markers at the clicked frequency with a name-only prompt.
+- Added graph right-click removal for visible Mic Plot markers using `Remove Marker: Name`.
+- Staggered nearby Mic Plot marker labels vertically so close frequencies remain readable.
+- Expanded the fixed RF amplitude range to `-110 dBm` through `-10 dBm`.
+- Reinforced graph Y-axis locking and 10 dB major tick spacing so high-amplitude traces do not shift the view.
+
 ## v1.9.5.25
 - Reduced live graph redraw work by keeping capture overlay curves alive between scans.
 - Reused Top RF Hit marker lines instead of recreating them every refresh.

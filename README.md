@@ -22,12 +22,13 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.5.25
+## What’s New in v1.9.6
 
-- Reduced live graph redraw work for capture overlays and Top RF Hit markers.
-- Made Top RF Hit selection and timed Peak Hold bookkeeping lighter during fast refreshes.
-- Updated `latest_scan.csv` more safely with an atomic replace.
-- Restored repository dependency maintenance files for GitHub.
+- Added right-click Mic Plot marker creation directly from the RF graph.
+- Added right-click marker removal from the RF graph.
+- Staggered nearby Mic Plot labels so close marker frequencies remain readable.
+- Expanded the fixed RF amplitude range to `-110 dBm` through `-10 dBm`.
+- Reinforced Y-axis locking so high-amplitude traces do not shift the scan view.
 
 ## Features
 
@@ -57,9 +58,10 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 
 ### Markers / Mic Plot
 - Add named frequency markers
+- Add and remove markers directly from the RF graph right-click menu
 - Persistent marker storage
 - Expanded color-coded vertical marker lines
-- Labels displayed directly on the RF graph
+- Staggered labels displayed directly on the RF graph
 
 ### Profiles
 - Create a new gig profile during a multi-gig day
@@ -131,8 +133,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.5.25-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.5.25-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.6-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.6-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:
