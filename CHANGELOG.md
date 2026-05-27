@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.9.5.12
+- Added a conservative tinySA wake sequence before the first `version` command.
+- The wake sequence sends blank lines, `resume`, `release`, and `refresh` with bounded reads.
+
 ## v1.9.5.11
 - Removed blocking `read_until()` and serial flush calls from tinySA command handling.
 - Added a serial write timeout so USB serial stalls fail fast instead of freezing the app.

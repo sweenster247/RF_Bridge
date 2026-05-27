@@ -7,7 +7,7 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from .config import BAUD, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
 from .scanner import read_frequencies_mhz, read_scan_dbm
-from .tinysa import send_command
+from .tinysa import send_command, wake_console
 
 
 class ScanWorker(QObject):
@@ -47,6 +47,9 @@ class ScanWorker(QObject):
             self._debug(f"[serial] Open successful; is_open={self.ser.is_open}")
             self.log.emit(f"Waiting {TINYSA_STARTUP_SETTLE_SECONDS:g}s for tinySA console…")
             time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)
+
+            self.log.emit("Waking tinySA console…")
+            wake_console(self.ser, debug_log=self._debug)
 
             version = send_command(self.ser, "version", debug_log=self._debug).strip()
             if version:

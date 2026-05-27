@@ -7,6 +7,8 @@ from serial.tools import list_ports
 
 from .config import BAUD
 
+WAKE_COMMANDS = ["", "resume", "release", "refresh"]
+
 
 def _debug_response(response, debug_log):
     if debug_log is None:
@@ -82,6 +84,31 @@ def send_command(ser, cmd, delay_seconds=0.2, response_window_seconds=5.0, debug
             return response
 
     return response
+
+
+def wake_console(ser, debug_log=None):
+    """Send a conservative tinySA console wake sequence.
+
+    These commands are intentionally best-effort. A silent tinySA may ignore
+    them all, but a responsive console can be nudged out of pause/touch states
+    before RF Bridge asks for version/frequency data.
+    """
+    if debug_log is not None:
+        debug_log("[serial] Sending tinySA wake sequence")
+
+    for command in WAKE_COMMANDS:
+        for line_ending in ("\r", "\n"):
+            try:
+                ser.reset_input_buffer()
+            except Exception:
+                pass
+            _send_payload(ser, command, line_ending, 0.05, debug_log=debug_log)
+            _read_response_window(
+                ser,
+                max_seconds=0.35,
+                idle_seconds=0.08,
+                debug_log=debug_log,
+            )
 
 
 def looks_like_tinysa(*values):

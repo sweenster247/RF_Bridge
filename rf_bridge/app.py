@@ -14,6 +14,7 @@ from .tinysa import (
     describe_port,
     find_tinysa_port,
     send_command,
+    wake_console,
 )
 from .settings import AppSettings
 from .ui import run_ui
@@ -246,6 +247,7 @@ def main(argv=None):
         time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)
 
         if version_output is None:
+            wake_console(ser)
             version_output = send_command(
                 ser,
                 "version"
