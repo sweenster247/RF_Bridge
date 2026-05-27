@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.9.5.10
+- Added a tinySA command fallback that tries the diagnostic read-window strategy when the prompt read returns no bytes.
+- The fallback also tries CR, LF, and CRLF command endings to match the standalone diagnostic helper.
+
 ## v1.9.5.9
 - Fixed a UI auto-connect regression where `debug_serial` was not stored on the main window.
 - This prevented the scan worker from starting after tinySA auto-detection.

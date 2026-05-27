@@ -8,11 +8,61 @@ from serial.tools import list_ports
 from .config import BAUD
 
 
+def _debug_response(response, debug_log):
+    if debug_log is None:
+        return
+
+    raw = response.encode(errors="replace")
+    debug_log(f"[serial] RX bytes={len(raw)}")
+    preview = response.replace("\r", "\\r").replace("\n", "\\n")
+    if len(preview) > 240:
+        preview = preview[:240] + "..."
+    debug_log(f"[serial] RX preview={preview!r}")
+
+
+def _read_response_window(ser, max_seconds=5.0, idle_seconds=0.25, debug_log=None):
+    end_time = time.time() + max_seconds
+    idle_deadline = None
+    chunks = []
+
+    while time.time() < end_time:
+        waiting = getattr(ser, "in_waiting", 0)
+
+        if waiting:
+            chunk = ser.read(waiting)
+            chunks.append(chunk)
+            if b"ch> " in chunk or b"ch> " in b"".join(chunks[-3:]):
+                break
+            idle_deadline = time.time() + idle_seconds
+        elif idle_deadline and time.time() >= idle_deadline:
+            break
+
+        time.sleep(0.025)
+
+    response = b"".join(chunks).decode(errors="ignore")
+    _debug_response(response, debug_log)
+    return response
+
+
+def _send_payload(ser, cmd, line_ending, delay_seconds, debug_log=None):
+    payload = (cmd + line_ending).encode()
+    if debug_log is not None:
+        printable = line_ending.replace("\r", "\\r").replace("\n", "\\n")
+        debug_log(f"[serial] TX command={cmd!r} ending={printable!r} bytes={payload!r}")
+    ser.write(payload)
+    try:
+        ser.flush()
+    except Exception:
+        pass
+    time.sleep(delay_seconds)
+
+
 def send_command(ser, cmd, delay_seconds=0.2, response_window_seconds=5.0, debug_log=None):
     """Send a tinySA console command and return text output.
 
-    v1.9.5.8 restores the confirmed-working v1.9.4.10 prompt-based read path
-    while keeping the debug serial logging added in v1.9.5.7.
+    Start with the confirmed-working v1.9.4.10 prompt-based CR command path.
+    If the tinySA returns no bytes, fall back to the diagnostic-style read path
+    and alternate line endings used by tinysa_diag.py.
     """
     if debug_log is not None:
         port = getattr(ser, "port", "unknown")
@@ -20,21 +70,29 @@ def send_command(ser, cmd, delay_seconds=0.2, response_window_seconds=5.0, debug
         timeout = getattr(ser, "timeout", None)
         debug_log(f"[serial] CMD {cmd!r} on {port}; open={is_open}; timeout={timeout}")
 
-    payload = (cmd + "\r").encode()
-    if debug_log is not None:
-        debug_log(f"[serial] TX bytes={payload!r}")
-
-    ser.write(payload)
-    time.sleep(delay_seconds)
-
+    _send_payload(ser, cmd, "\r", delay_seconds, debug_log=debug_log)
     response = ser.read_until(b"ch> ", size=None).decode(errors="ignore")
+    _debug_response(response, debug_log)
+
+    if response.strip():
+        return response
+
     if debug_log is not None:
-        raw = response.encode(errors="replace")
-        debug_log(f"[serial] RX bytes={len(raw)}")
-        preview = response.replace("\r", "\\r").replace("\n", "\\n")
-        if len(preview) > 240:
-            preview = preview[:240] + "..."
-        debug_log(f"[serial] RX preview={preview!r}")
+        debug_log("[serial] prompt read returned no bytes; trying diagnostic fallback")
+
+    for line_ending in ("\r", "\n", "\r\n"):
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+        _send_payload(ser, cmd, line_ending, delay_seconds, debug_log=debug_log)
+        response = _read_response_window(
+            ser,
+            max_seconds=response_window_seconds,
+            debug_log=debug_log,
+        )
+        if response.strip():
+            return response
 
     return response
 
