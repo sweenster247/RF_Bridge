@@ -20,6 +20,16 @@ from .version import __version__
 
 
 REFRESH_MODES = [0.5, 1, 2, 5, 10]
+MAX_CONSECUTIVE_SCAN_MISMATCHES = 3
+DEVICE_UNAVAILABLE_MARKERS = (
+    "device not configured",
+    "no such file",
+    "input/output error",
+    "i/o error",
+    "write failed",
+    "read failed",
+    "could not open port",
+)
 PEAK_MODES = [
     ("OFF", None),
     ("LATCH", "latch"),
@@ -124,6 +134,7 @@ class RFBridgeWindow:
             QHBoxLayout,
             QLabel,
             QMainWindow,
+            QMenu,
             QMessageBox,
             QPushButton,
             QSizePolicy,
@@ -139,6 +150,7 @@ class RFBridgeWindow:
         self.QMetaObject = QMetaObject
         self.Q_ARG = Q_ARG
         self.QMessageBox = QMessageBox
+        self.QMenu = QMenu
         self.QTimer = QTimer
         self.QAction = QAction
         self.pg = pg
@@ -168,7 +180,10 @@ class RFBridgeWindow:
         self.overlay_checkbox_widgets = []
         self.overlay_color_index = 0
         self.scan_error_count = 0
+        self.scan_mismatch_count = 0
         self.auto_connect_in_progress = False
+        self.force_disconnected_actions = False
+        self.pending_disconnect_status = None
         self.shutting_down = False
         self.shutdown_started = False
         self.live_freqs_mhz = []
@@ -207,10 +222,13 @@ class RFBridgeWindow:
         self.app.aboutToQuit.connect(self.shutdown)
         self.window.setWindowTitle("RF Bridge")
         self.window.resize(1640, 940)
+        self.window.setMinimumSize(1280, 760)
 
         saved_geometry = self.settings.get_bytes("window_geometry")
         if saved_geometry:
             self.window.restoreGeometry(saved_geometry)
+            if self.window.width() < 1280 or self.window.height() < 760:
+                self.window.resize(max(self.window.width(), 1280), max(self.window.height(), 760))
 
         root = QWidget()
         shell_layout = QHBoxLayout(root)
@@ -272,12 +290,19 @@ class RFBridgeWindow:
             self.about_nav_button,
         ):
             button.setObjectName("sidebarButton")
-            button.setMinimumHeight(38)
+            button.setMinimumHeight(42)
             button.setFlat(True)
             sidebar_layout.addWidget(button)
 
         self.rf_scan_button.setEnabled(False)
         sidebar_layout.addStretch(1)
+        self.sidebar_connection_label = QLabel("Disconnected")
+        self.sidebar_connection_label.setObjectName("sidebarConnectionLabel")
+        self.sidebar_device_label = QLabel("Device: —")
+        self.sidebar_device_label.setObjectName("sidebarDeviceLabel")
+        self.sidebar_device_label.setWordWrap(True)
+        sidebar_layout.addWidget(self.sidebar_connection_label)
+        sidebar_layout.addWidget(self.sidebar_device_label)
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -298,6 +323,8 @@ class RFBridgeWindow:
         self.status_dot.setFixedWidth(18)
         self.connection_status = QLabel("Disconnected")
         self.connection_status.setObjectName("connectionStatus")
+        self.connection_status.setMinimumWidth(0)
+        self.connection_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.port_combo = QComboBox()
         self.refresh_ports_button = QPushButton("Refresh Ports")
         self.connect_button = QPushButton("Connect")
@@ -306,13 +333,21 @@ class RFBridgeWindow:
         self.disconnect_button.setVisible(False)
         self.device_info_label = QLabel("Device: —\nRange: —")
         self.device_info_label.setObjectName("deviceInfoLabel")
+        self.device_info_label.setMinimumWidth(0)
+        self.device_info_label.setFixedHeight(42)
+        self.device_info_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.device_notice_label = QLabel("")
         self.device_notice_label.setObjectName("deviceNoticeLabel")
         self.device_notice_label.setWordWrap(True)
+        self.device_notice_label.setMinimumWidth(0)
+        self.device_notice_label.setFixedHeight(44)
+        self.device_notice_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.device_notice_label.setVisible(False)
 
         self.port_combo.setMinimumWidth(220)
-        self.port_combo.setMaximumWidth(330)
+        self.port_combo.setMaximumWidth(310)
+        self.port_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.port_combo.view().setTextElideMode(self.Qt.ElideMiddle)
         self.refresh_ports_button.setText("Refresh")
         for _btn in (self.refresh_ports_button, self.connect_button, self.disconnect_button):
             _btn.setMinimumHeight(26)
@@ -329,13 +364,11 @@ class RFBridgeWindow:
         connection_layout.addWidget(self.device_notice_label, 4, 0, 1, 4)
         connection_layout.setColumnStretch(1, 1)
         connection_panel.setFixedWidth(330)
-        connection_panel.setMinimumHeight(160)
-        connection_panel.setMaximumHeight(195)
+        connection_panel.setFixedHeight(195)
 
         self.overlay_panel = QFrame()
         self.overlay_panel.setObjectName("overlayPanel")
-        self.overlay_panel.setMinimumHeight(160)
-        self.overlay_panel.setMaximumHeight(175)
+        self.overlay_panel.setFixedHeight(195)
         overlay_layout = QVBoxLayout(self.overlay_panel)
         overlay_layout.setContentsMargins(14, 10, 14, 10)
         overlay_layout.setSpacing(8)
@@ -416,6 +449,12 @@ class RFBridgeWindow:
         self.cursor_line = pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen("#00ff99", width=1))
         self.cursor_line.setVisible(False)
         self.plot.addItem(self.cursor_line, ignoreBounds=True)
+        self.low_freq_label = pg.TextItem("", color=self.theme["axis_text"], anchor=(0, 1))
+        self.high_freq_label = pg.TextItem("", color=self.theme["axis_text"], anchor=(1, 1))
+        for label in (self.low_freq_label, self.high_freq_label):
+            label.setZValue(30)
+            label.setVisible(False)
+            self.plot.addItem(label, ignoreBounds=True)
 
         side_panel = QFrame()
         side_panel.setObjectName("sidePanel")
@@ -428,7 +467,7 @@ class RFBridgeWindow:
         self.summary_label.setObjectName("summaryLabel")
         self.summary_label.setAlignment(self.Qt.AlignTop | self.Qt.AlignLeft)
         self.summary_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
-        self.hover_label = QLabel("Hover over the graph for live readout.")
+        self.hover_label = QLabel("Hover graph for readout.")
         self.hover_label.setObjectName("hoverLabel")
         self.hover_label.setAlignment(self.Qt.AlignTop | self.Qt.AlignLeft)
         self.hover_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
@@ -439,6 +478,7 @@ class RFBridgeWindow:
         self.hover_label.setMaximumHeight(96)
 
         self.peak_button = QPushButton("Peak: OFF")
+        self.peak_button.setContextMenuPolicy(self.Qt.CustomContextMenu)
         self.reset_button = QPushButton("Reset Peaks")
         self.refresh_button = QPushButton(f"Refresh: {format_seconds(self.refresh_seconds)}s")
         self.freeze_button = QPushButton("Freeze: OFF")
@@ -461,10 +501,13 @@ class RFBridgeWindow:
         self.log_box = QTextEdit()
         self.log_box.setObjectName("logBox")
         self.log_box.setReadOnly(True)
-        self.log_box.setMaximumHeight(96)
+        self.log_box.setFixedHeight(96)
+        self.log_box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.status_label = QLabel("")
         self.status_label.setObjectName("statusLabel")
-        self.status_label.setMinimumHeight(38)
+        self.status_label.setFixedHeight(38)
+        self.status_label.setMinimumWidth(0)
+        self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.status_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
 
         root_layout.addLayout(top_layout)
@@ -480,6 +523,7 @@ class RFBridgeWindow:
         self.connect_button.clicked.connect(self.connect_device)
         self.disconnect_button.clicked.connect(self.disconnect_device)
         self.peak_button.clicked.connect(self.toggle_peak)
+        self.peak_button.customContextMenuRequested.connect(self.show_peak_menu)
         self.reset_button.clicked.connect(self.reset_peaks)
         self.refresh_button.clicked.connect(self.toggle_refresh)
         self.freeze_button.clicked.connect(self.toggle_freeze)
@@ -560,8 +604,10 @@ class RFBridgeWindow:
         QLabel#overlayEmptyHint {{ color: {t['muted_text']}; font-size: 12px; background: transparent; padding: 2px; }}
         QLabel#sidebarLogo {{ background: transparent; border: 0px; }}
         QLabel#sidebarTitle {{ font-weight: bold; color: {t['text']}; font-size: 24px; background: transparent; }}
-        QLabel#sidebarSubtitle {{ color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; letter-spacing: 0.2px; background: transparent; padding-bottom: 2px; }}
-        QPushButton#sidebarButton {{ text-align: left; border: 0px; background: transparent; color: {t['text']}; padding: 9px 12px; border-radius: 7px; }}
+        QLabel#sidebarSubtitle {{ color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; letter-spacing: 0.2px; background: transparent; padding-bottom: 2px; }}
+        QLabel#sidebarConnectionLabel {{ color: {t['text']}; font-weight: bold; font-size: 15px; background: transparent; padding: 8px 12px 0px 12px; }}
+        QLabel#sidebarDeviceLabel {{ color: {t['muted_text']}; font-size: 13px; background: transparent; padding: 0px 12px 8px 12px; }}
+        QPushButton#sidebarButton {{ text-align: left; border: 0px; background: transparent; color: {t['text']}; padding: 10px 12px; border-radius: 7px; font-size: 15px; }}
         QPushButton#sidebarButton:hover {{ background: {t['button_hover']}; }}
         QPushButton#sidebarButton:disabled {{ color: {t['connected']}; background: {t['hover_bg']}; }}
         QTextEdit#logBox {{ background: {t['log_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding: 6px; }}
@@ -673,6 +719,7 @@ class RFBridgeWindow:
         self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
         self.plot.setLabel("left", "dBm", color=self.theme["axis_text"])
+        self.update_frequency_range_labels()
         self.update_connection_state(self.connected, self.connection_status.text())
         self.render_mic_markers()
         self.render_capture_overlays()
@@ -712,6 +759,7 @@ class RFBridgeWindow:
 
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
         self.lock_plot_axes(preserve_x=True)
+        self.update_frequency_range_labels()
         self.cursor_line.setPos(self.freqs_mhz[0])
         self.render_mic_markers()
         self.live_curve.setData(self.freqs_mhz, self.display_dbm)
@@ -736,6 +784,7 @@ class RFBridgeWindow:
         self.return_live_button.setEnabled(False)
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
         self.lock_plot_axes(preserve_x=True)
+        self.update_frequency_range_labels()
         self.cursor_line.setPos(self.freqs_mhz[0])
         self.render_mic_markers()
         self.render_scan(self.latest_dbm)
@@ -1311,9 +1360,9 @@ class RFBridgeWindow:
 
         self.selected_port = port
         self.settings.set("last_port", port)
-        self.update_connection_state(False, "Connecting…")
-        self.connect_button.setEnabled(False)
-        self.disconnect_button.setEnabled(True)
+        self.force_disconnected_actions = False
+        self.pending_disconnect_status = None
+        self.scan_mismatch_count = 0
         self.worker_thread = self.QThread()
         self.worker = ScanWorker(port, self.refresh_seconds, debug_serial=self.debug_serial)
         self.worker.moveToThread(self.worker_thread)
@@ -1327,6 +1376,7 @@ class RFBridgeWindow:
         self.worker_thread.finished.connect(self.worker.deleteLater)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
         self.worker_thread.finished.connect(self.clear_worker_refs)
+        self.update_connection_state(False, "Connecting…")
         self.worker_thread.start()
         self.log(f"Connecting to {port}")
 
@@ -1347,6 +1397,8 @@ class RFBridgeWindow:
     def clear_worker_refs(self):
         self.worker = None
         self.worker_thread = None
+        if not self.connected:
+            self.update_connection_state(False, self.connection_status.text())
 
     def start_demo_mode(self):
         self.demo_mode = True
@@ -1363,10 +1415,12 @@ class RFBridgeWindow:
         self.reset_peaks()
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
         self.lock_plot_axes(preserve_x=True)
+        self.update_frequency_range_labels()
         self.cursor_line.setPos(self.freqs_mhz[0])
         self.device_info_label.setText("Device: Demo Mode\nRange: 470.000–560.000 MHz")
         self.show_device_notice("Demo Mode is visual only. No CSV files are written.")
         self.update_connection_state(True, "Demo Mode")
+        self.disconnect_button.setText("Disconnect Demo")
         self.log("Demo Mode started; CSV export disabled")
 
         self.demo_timer = self.QTimer(self.window)
@@ -1388,9 +1442,11 @@ class RFBridgeWindow:
         self.freqs_mhz = []
         self.live_curve.setData([], [])
         self.peak_curve.setData([], [])
+        self.update_frequency_range_labels([])
         self.clear_device_notice()
         self.update_top_frequencies([])
         self.update_connection_state(False)
+        self.disconnect_button.setText("Disconnect")
         self.log("Demo Mode stopped")
 
     def generate_demo_scan(self):
@@ -1440,6 +1496,10 @@ class RFBridgeWindow:
 
     def on_connected(self, port, version, freqs_mhz):
         self.auto_connect_in_progress = False
+        self.force_disconnected_actions = False
+        self.pending_disconnect_status = None
+        self.scan_mismatch_count = 0
+        self.scan_error_count = 0
         self.connected = True
         self.selected_port = port
         self.freqs_mhz = freqs_mhz
@@ -1449,6 +1509,7 @@ class RFBridgeWindow:
         self.reset_peaks()
         self.plot.setXRange(min(freqs_mhz), max(freqs_mhz), padding=0)
         self.lock_plot_axes(preserve_x=True)
+        self.update_frequency_range_labels()
         self.cursor_line.setPos(freqs_mhz[0])
         self.render_mic_markers()
         self.device_info_label.setText(
@@ -1457,22 +1518,49 @@ class RFBridgeWindow:
         )
         self.clear_device_notice()
         self.update_connection_state(True, "Connected")
+        self.disconnect_button.setText("Disconnect tinySA")
         self.log(f"Frequency range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz")
 
     def on_disconnected(self):
         was_connected = self.connected
+        status_text = self.pending_disconnect_status
+        self.pending_disconnect_status = None
         self.connected = False
-        self.update_connection_state(False)
+        self.scan_mismatch_count = 0
+        self.update_connection_state(False, status_text)
         if was_connected:
             self.log("Disconnected")
+
+    def is_device_unavailable_error(self, message):
+        lowered = str(message).lower()
+        return any(marker in lowered for marker in DEVICE_UNAVAILABLE_MARKERS)
+
+    def mark_device_unavailable(self, status, notice, log_message=None):
+        self.auto_connect_in_progress = False
+        self.force_disconnected_actions = True
+        self.pending_disconnect_status = status
+        self.show_device_notice(notice)
+        self.update_connection_state(False, status)
+        if log_message:
+            self.log(log_message)
+        self.disconnect_device()
 
     def on_worker_error(self, message):
         if self.shutting_down:
             return
 
         message_text = str(message)
-        self.log(message_text)
         lowered = message_text.lower()
+
+        if self.is_device_unavailable_error(message_text):
+            self.log("tinySA disconnected or stopped responding")
+            self.mark_device_unavailable(
+                "Disconnected — tinySA unavailable",
+                "tinySA disconnected or stopped responding. Reconnect/power-cycle it, then connect again.",
+            )
+            return
+
+        self.log(message_text)
 
         transient_empty_read = (
             "returned no data" in lowered
@@ -1482,13 +1570,11 @@ class RFBridgeWindow:
 
         if transient_empty_read:
             self.scan_error_count += 1
-            self.log("tinySA did not return data yet; leaving the UI open for retry/reconnect")
-            self.show_device_notice(
-                "tinySA is not returning data. Reboot/power-cycle the tinySA, then reconnect."
+            self.mark_device_unavailable(
+                "Disconnected — tinySA not ready",
+                "tinySA is not returning data. Reboot/power-cycle the tinySA, then reconnect.",
+                "tinySA did not return data; disconnected for retry/reconnect",
             )
-            self.update_connection_state(False, "Disconnected — tinySA not ready")
-            self.auto_connect_in_progress = False
-            self.disconnect_device()
             # Do not show a modal startup warning for this recoverable case. The
             # app should stay usable for capture overlays and manual reconnect.
             return
@@ -1496,27 +1582,58 @@ class RFBridgeWindow:
         # Auto-connect should never block app startup with a modal error.
         # Manual non-transient errors still show the warning so troubleshooting is obvious.
         if self.auto_connect_in_progress:
-            self.auto_connect_in_progress = False
-            self.disconnect_device()
-            self.update_connection_state(False, "Disconnected — tinySA not ready")
+            self.mark_device_unavailable(
+                "Disconnected — tinySA not ready",
+                "tinySA is not ready. Reconnect or power-cycle it, then connect again.",
+            )
             return
         self.show_error(message_text)
 
     def update_connection_state(self, connected, text=None):
+        if connected:
+            self.force_disconnected_actions = False
         self.connected = connected
         self.status_dot.setStyleSheet(f"color: {self.theme['connected'] if connected else self.theme['disconnected']};")
-        self.connection_status.setText(text or ("Connected" if connected else "Disconnected"))
-        show_disconnect = connected or self.worker is not None
+        status_text = text or ("Connected" if connected else "Disconnected")
+        self.connection_status.setText(status_text)
+        self.sidebar_connection_label.setText(status_text)
+        device_name = "Demo Mode" if self.demo_mode else ("tinySA" if connected else "—")
+        self.sidebar_device_label.setText(f"Device: {device_name}")
+        show_disconnect = (connected or self.worker is not None) and not self.force_disconnected_actions
         self.connect_button.setVisible(not show_disconnect)
         self.refresh_ports_button.setVisible(not show_disconnect)
         self.disconnect_button.setVisible(show_disconnect)
-        self.connect_button.setEnabled(not connected)
+        self.connect_button.setEnabled(not connected and self.worker is None)
         self.disconnect_button.setEnabled(show_disconnect)
-        self.refresh_ports_button.setEnabled(not connected)
-        self.port_combo.setEnabled(not connected)
+        self.refresh_ports_button.setEnabled(not connected and self.worker is None)
+        self.port_combo.setEnabled(not connected and self.worker is None)
         if not connected:
             self.device_info_label.setText("Device: —\nRange: —")
+            self.disconnect_button.setText("Disconnect")
+            if self.worker is None and not self.demo_mode:
+                self.update_frequency_range_labels([])
         self.update_status()
+
+    def update_frequency_range_labels(self, freqs_mhz=None):
+        if freqs_mhz is None:
+            freqs_mhz = self.freqs_mhz
+
+        if not freqs_mhz:
+            self.low_freq_label.setVisible(False)
+            self.high_freq_label.setVisible(False)
+            return
+
+        low_freq = min(freqs_mhz)
+        high_freq = max(freqs_mhz)
+        label_y = RF_Y_MIN + 4
+        self.low_freq_label.setText(f"Low {low_freq:.3f} MHz")
+        self.high_freq_label.setText(f"High {high_freq:.3f} MHz")
+        self.low_freq_label.setColor(self.theme["axis_text"])
+        self.high_freq_label.setColor(self.theme["axis_text"])
+        self.low_freq_label.setPos(low_freq, label_y)
+        self.high_freq_label.setPos(high_freq, label_y)
+        self.low_freq_label.setVisible(True)
+        self.high_freq_label.setVisible(True)
 
     def show_device_notice(self, message):
         self.device_notice_label.setText(message)
@@ -1572,6 +1689,19 @@ class RFBridgeWindow:
 
     def toggle_peak(self):
         self.peak_mode_index = (self.peak_mode_index + 1) % len(PEAK_MODES)
+        self.set_peak_mode(self.peak_mode_index)
+
+    def show_peak_menu(self, position):
+        menu = self.QMenu(self.window)
+        for index, (label, _window_seconds) in enumerate(PEAK_MODES):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(index == self.peak_mode_index)
+            action.triggered.connect(lambda _checked=False, i=index: self.set_peak_mode(i))
+        menu.exec(self.peak_button.mapToGlobal(position))
+
+    def set_peak_mode(self, index):
+        self.peak_mode_index = index % len(PEAK_MODES)
         self.settings.set("peak_mode_index", self.peak_mode_index)
         label, window_seconds = PEAK_MODES[self.peak_mode_index]
         self.peak_button.setText(f"Peak: {label}")
@@ -1604,8 +1734,20 @@ class RFBridgeWindow:
         if not live_freqs:
             return
         if len(dbm) != len(live_freqs):
-            self.log(f"Warning: frequency/data mismatch: {len(live_freqs)} freqs, {len(dbm)} levels")
+            self.scan_mismatch_count += 1
+            if self.scan_mismatch_count == 1:
+                self.log(
+                    "tinySA scan point count changed; waiting for a clean scan "
+                    f"({len(live_freqs)} freqs, {len(dbm)} levels)"
+                )
+            if self.scan_mismatch_count >= MAX_CONSECUTIVE_SCAN_MISMATCHES:
+                self.mark_device_unavailable(
+                    "Disconnected — tinySA data changed",
+                    "tinySA scan data no longer matches the frequency range. Connect again to refresh the range.",
+                    "tinySA data stayed out of sync; disconnected for reconnect",
+                )
             return
+        self.scan_mismatch_count = 0
         self.latest_dbm = dbm
         if self.capture_mode:
             self.return_live_button.setEnabled(True)
@@ -1641,6 +1783,7 @@ class RFBridgeWindow:
             if self.peak_hold:
                 self.peak_curve.setData(self.freqs_mhz, self.peak_hold)
         self.live_curve.setData(self.freqs_mhz, dbm)
+        self.update_frequency_range_labels()
         self.render_capture_overlays()
         self.update_top_frequencies(dbm)
         self.lock_plot_axes(preserve_x=True)
@@ -1675,19 +1818,26 @@ class RFBridgeWindow:
     def update_hover_label(self, idx):
         source = self.display_dbm or self.latest_dbm
         if idx is None or not source or not self.freqs_mhz:
-            self.hover_label.setText("Hover over the graph for live readout.")
+            self.hover_label.setText("Hover graph for readout.")
             return
         nearest_freq = self.freqs_mhz[idx]
         nearest_level = source[idx]
         if self.capture_mode and self.loaded_capture:
-            mode_text = f"\nLoaded Capture: {self.loaded_capture['name']}"
+            mode_text = "\nMode: Capture"
         else:
-            mode_text = "\nFrozen Trace" if self.frozen else ""
+            mode_text = "\nMode: Frozen" if self.frozen else ""
         if self.peak_hold:
             nearest_peak = self.peak_hold[idx]
-            self.hover_label.setText(f"{nearest_freq:.6f} MHz\nLive: {nearest_level:.2f} dBm\nPeak: {nearest_peak:.2f} dBm{mode_text}")
+            self.hover_label.setText(
+                f"{nearest_freq:.3f} MHz\n"
+                f"Live: {nearest_level:.2f} dBm\n"
+                f"Peak: {nearest_peak:.2f} dBm{mode_text}"
+            )
         else:
-            self.hover_label.setText(f"{nearest_freq:.6f} MHz\nLive: {nearest_level:.2f} dBm{mode_text}")
+            self.hover_label.setText(
+                f"{nearest_freq:.3f} MHz\n"
+                f"Live: {nearest_level:.2f} dBm{mode_text}"
+            )
 
     def on_mouse_move(self, scene_pos):
         if not self.freqs_mhz or not (self.display_dbm or self.latest_dbm):
@@ -1718,7 +1868,7 @@ class RFBridgeWindow:
         minutes = next_save // 60
         seconds = next_save % 60
         if self.capture_mode and self.loaded_capture:
-            freeze_label = f"Loaded Capture: {self.loaded_capture['name']}"
+            freeze_label = "Capture"
         elif self.demo_mode:
             freeze_label = "Demo"
         else:
@@ -1727,15 +1877,16 @@ class RFBridgeWindow:
         overlay_count = sum(1 for capture in self.capture_overlays if capture.get("visible", True))
         if self.demo_mode:
             self.status_label.setText(
-                f"Scan Folder: disabled in Demo Mode   |   Latest: disabled   |   "
-                f"Next Save: --   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
-                f"Mode: {freeze_label}   |   Overlays: {overlay_count}   |   tinySA: {device_label}"
+                f"Mode: {freeze_label}   |   CSV: disabled   |   "
+                f"Refresh: {format_seconds(self.refresh_seconds)}s   |   Overlays: {overlay_count}"
             )
             return
+        folder_label = os.path.basename(os.path.normpath(self.output_dir)) or self.output_dir
+        latest_label = "latest_scan.csv" if self.last_save_time else "waiting"
         self.status_label.setText(
-            f"Scan Folder: {self.output_dir}   |   Latest: latest_scan.csv   |   "
-            f"Next Save: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
-            f"Mode: {freeze_label}   |   Overlays: {overlay_count}   |   tinySA: {device_label}"
+            f"Folder: {folder_label}   |   Latest: {latest_label}   |   "
+            f"Next: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
+            f"Mode: {freeze_label}   |   Overlays: {overlay_count}"
         )
 
     def handle_close_event(self, event):

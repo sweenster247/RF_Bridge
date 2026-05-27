@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.9.5.21
+- Batched UI polish for connection stability, Demo Mode layout stability, larger sidebar navigation text, and a shorter bottom status bar.
+- Added live/disconnected device state to the lower left sidebar.
+- Added a right-click Peak menu while keeping the existing left-click peak toggle.
+
+## v1.9.5.20
+- Shortened RF plot hover readout text and rounded hover frequencies to three decimals so the live readout fits in the UI.
+
+## v1.9.5.19
+- Added low/high frequency range labels directly on the RF plot.
+
+## v1.9.5.18
+- Stabilized the main window layout so connection, device, and status text changes do not resize the app window.
+
+## v1.9.5.17
+- Cleaned up tinySA disconnect handling so unplugged/unavailable devices switch the connection UI back to reconnect state.
+- Reduced repeated frequency/data mismatch log spam and disconnect after repeated mismatched scans so the range can be refreshed.
+
 ## v1.9.5.16
 - Added extra noise, transient spikes, and subtle floor movement to Demo Mode.
 - Refined the macOS app icon source so the RF Bridge artwork fills more of the icon without the extra bordered frame.
