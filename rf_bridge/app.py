@@ -7,7 +7,7 @@ import time
 
 import serial
 
-from .config import BAUD, SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
+from .config import BAUD, SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
 from .scanner import read_frequencies_mhz, run_headless
 from .tinysa import (
     candidate_serial_ports,
@@ -239,7 +239,8 @@ def main(argv=None):
     with serial.Serial(
         selected_port,
         BAUD,
-        timeout=TINYSA_SERIAL_TIMEOUT_SECONDS
+        timeout=TINYSA_SERIAL_TIMEOUT_SECONDS,
+        write_timeout=TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS,
     ) as ser:
 
         time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)

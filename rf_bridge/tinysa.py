@@ -50,35 +50,22 @@ def _send_payload(ser, cmd, line_ending, delay_seconds, debug_log=None):
         printable = line_ending.replace("\r", "\\r").replace("\n", "\\n")
         debug_log(f"[serial] TX command={cmd!r} ending={printable!r} bytes={payload!r}")
     ser.write(payload)
-    try:
-        ser.flush()
-    except Exception:
-        pass
+    if debug_log is not None:
+        debug_log("[serial] TX write complete")
     time.sleep(delay_seconds)
 
 
 def send_command(ser, cmd, delay_seconds=0.2, response_window_seconds=5.0, debug_log=None):
     """Send a tinySA console command and return text output.
 
-    Start with the confirmed-working v1.9.4.10 prompt-based CR command path.
-    If the tinySA returns no bytes, fall back to the diagnostic-style read path
-    and alternate line endings used by tinysa_diag.py.
+    Use bounded diagnostic-style reads so a tinySA/USB serial stall cannot hang
+    the UI worker indefinitely. Try CR first, then LF and CRLF.
     """
     if debug_log is not None:
         port = getattr(ser, "port", "unknown")
         is_open = getattr(ser, "is_open", None)
         timeout = getattr(ser, "timeout", None)
         debug_log(f"[serial] CMD {cmd!r} on {port}; open={is_open}; timeout={timeout}")
-
-    _send_payload(ser, cmd, "\r", delay_seconds, debug_log=debug_log)
-    response = ser.read_until(b"ch> ", size=None).decode(errors="ignore")
-    _debug_response(response, debug_log)
-
-    if response.strip():
-        return response
-
-    if debug_log is not None:
-        debug_log("[serial] prompt read returned no bytes; trying diagnostic fallback")
 
     for line_ending in ("\r", "\n", "\r\n"):
         try:

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.9.5.11
+- Removed blocking `read_until()` and serial flush calls from tinySA command handling.
+- Added a serial write timeout so USB serial stalls fail fast instead of freezing the app.
+- tinySA commands now use bounded diagnostic-style reads for CR, LF, and CRLF endings.
+
 ## v1.9.5.10
 - Added a tinySA command fallback that tries the diagnostic read-window strategy when the prompt read returns no bytes.
 - The fallback also tries CR, LF, and CRLF command endings to match the standalone diagnostic helper.

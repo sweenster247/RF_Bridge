@@ -5,7 +5,7 @@ import time
 import serial
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
-from .config import BAUD, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
+from .config import BAUD, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
 from .scanner import read_frequencies_mhz, read_scan_dbm
 from .tinysa import send_command
 
@@ -34,8 +34,16 @@ class ScanWorker(QObject):
     @Slot()
     def start(self):
         try:
-            self._debug(f"[serial] Opening {self.port} @ {self.baud}; timeout={TINYSA_SERIAL_TIMEOUT_SECONDS}")
-            self.ser = serial.Serial(self.port, self.baud, timeout=TINYSA_SERIAL_TIMEOUT_SECONDS)
+            self._debug(
+                f"[serial] Opening {self.port} @ {self.baud}; "
+                f"timeout={TINYSA_SERIAL_TIMEOUT_SECONDS}; write_timeout={TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS}"
+            )
+            self.ser = serial.Serial(
+                self.port,
+                self.baud,
+                timeout=TINYSA_SERIAL_TIMEOUT_SECONDS,
+                write_timeout=TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS,
+            )
             self._debug(f"[serial] Open successful; is_open={self.ser.is_open}")
             self.log.emit(f"Waiting {TINYSA_STARTUP_SETTLE_SECONDS:g}s for tinySA console…")
             time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)
