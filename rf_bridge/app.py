@@ -18,7 +18,7 @@ from .tinysa import (
 )
 from .settings import AppSettings
 from .ui import run_ui
-from .utils import safe_name
+from .utils import clean_tinysa_version, safe_name
 
 
 def running_as_packaged_app():
@@ -248,10 +248,11 @@ def main(argv=None):
 
         if version_output is None:
             wake_console(ser)
-            version_output = send_command(
+            raw_version_output = send_command(
                 ser,
                 "version"
             ).strip()
+            version_output = clean_tinysa_version(raw_version_output)
 
             print(version_output)
 

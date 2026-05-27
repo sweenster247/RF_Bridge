@@ -289,6 +289,7 @@ class RFBridgeWindow:
 
         self.status_dot = QLabel("●")
         self.status_dot.setObjectName("statusDot")
+        self.status_dot.setFixedWidth(18)
         self.connection_status = QLabel("Disconnected")
         self.connection_status.setObjectName("connectionStatus")
         self.port_combo = QComboBox()
@@ -296,6 +297,7 @@ class RFBridgeWindow:
         self.connect_button = QPushButton("Connect")
         self.disconnect_button = QPushButton("Disconnect")
         self.disconnect_button.setEnabled(False)
+        self.disconnect_button.setVisible(False)
         self.device_info_label = QLabel("Device: —\nRange: —")
         self.device_info_label.setObjectName("deviceInfoLabel")
         self.device_notice_label = QLabel("")
@@ -314,8 +316,8 @@ class RFBridgeWindow:
         connection_layout.addWidget(self.status_dot, 0, 0)
         connection_layout.addWidget(self.connection_status, 0, 1, 1, 3)
         connection_layout.addWidget(self.port_combo, 1, 0, 1, 4)
-        connection_layout.addWidget(self.connect_button, 2, 0, 1, 1)
-        connection_layout.addWidget(self.disconnect_button, 2, 1, 1, 1)
+        connection_layout.addWidget(self.connect_button, 2, 0, 1, 2)
+        connection_layout.addWidget(self.disconnect_button, 2, 0, 1, 4)
         connection_layout.addWidget(self.refresh_ports_button, 2, 2, 1, 2)
         connection_layout.addWidget(self.device_info_label, 3, 0, 1, 4)
         connection_layout.addWidget(self.device_notice_label, 4, 0, 1, 4)
@@ -541,8 +543,8 @@ class RFBridgeWindow:
         QLabel#summaryLabel, QLabel#hoverLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; }}
         QLabel#hoverLabel {{ background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 8px; }}
         QLabel#statusLabel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }}
-        QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; }}
-        QLabel#connectionStatus {{ font-weight: bold; background: transparent; }}
+        QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; background: transparent; }}
+        QLabel#connectionStatus {{ font-weight: bold; background: transparent; font-size: 16px; }}
         QLabel#deviceInfoLabel {{ color: {t['muted_text']}; background: transparent; font-size: 12px; padding-top: 2px; }}
         QLabel#deviceNoticeLabel {{ color: {t['disconnected']}; background: transparent; font-size: 12px; padding-top: 2px; }}
         QLabel#overlayHeaderIcon {{ color: {t['text']}; font-size: 26px; font-weight: bold; padding-right: 4px; background: transparent; }}
@@ -1348,7 +1350,7 @@ class RFBridgeWindow:
             f"Range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz"
         )
         self.clear_device_notice()
-        self.update_connection_state(True, f"Connected: {port}")
+        self.update_connection_state(True, "Connected")
         self.log(f"Frequency range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz")
 
     def on_disconnected(self):
@@ -1398,8 +1400,12 @@ class RFBridgeWindow:
         self.connected = connected
         self.status_dot.setStyleSheet(f"color: {self.theme['connected'] if connected else self.theme['disconnected']};")
         self.connection_status.setText(text or ("Connected" if connected else "Disconnected"))
+        show_disconnect = connected or self.worker is not None
+        self.connect_button.setVisible(not show_disconnect)
+        self.refresh_ports_button.setVisible(not show_disconnect)
+        self.disconnect_button.setVisible(show_disconnect)
         self.connect_button.setEnabled(not connected)
-        self.disconnect_button.setEnabled(connected or self.worker is not None)
+        self.disconnect_button.setEnabled(show_disconnect)
         self.refresh_ports_button.setEnabled(not connected)
         self.port_combo.setEnabled(not connected)
         if not connected:

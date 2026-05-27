@@ -18,8 +18,10 @@
 
 RF Bridge is a macOS desktop utility for live sound engineers, RF coordinators, and wireless technicians using a tinySA spectrum analyzer. It captures live RF scans, visualizes the spectrum in real time, and continuously writes Wireless Workbench-compatible CSV files for practical coordination workflows.
 
-## What’s New in v1.9.5.13
+## What’s New in v1.9.5.14
 
+- Cleaned raw tinySA console echoes from the device label
+- Simplified connection actions so connected state shows a single Disconnect button
 - Cleaned up the tinySA connection panel and added an in-panel silent-device notice
 - Simplified the RF plot left-axis label to remove stray clipped lettering
 - Added a conservative tinySA wake sequence before the first `version` command
@@ -108,6 +110,12 @@ Install dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
+Dependency monitoring:
+
+- Dependabot is configured to check Python and GitHub Actions dependencies weekly.
+- The dependency audit workflow records the exact resolved package versions and fails if `pip-audit` finds a known vulnerability.
+- Turn on Dependabot alerts and security updates in the GitHub repository settings to receive vulnerability notifications.
+
 Run from source:
 
 ```bash
@@ -129,8 +137,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.5.13-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.5.13-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.5.14-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.5.14-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

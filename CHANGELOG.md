@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.9.5.14
+- Cleaned raw tinySA console echo/prompt text from the device label.
+- Simplified the connection card action row so connected state shows one Disconnect action.
+- Removed the dark background block behind the connection status indicator.
+
 ## v1.9.5.13
 - Cleaned up the tinySA connection panel layout.
 - Added an in-panel notice when the tinySA serial console does not return data.

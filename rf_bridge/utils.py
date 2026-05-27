@@ -24,3 +24,16 @@ def parse_numbers(output):
             pass
 
     return nums
+
+
+def clean_tinysa_version(output):
+    """Return a compact tinySA version label from raw console output."""
+    for line in str(output or "").replace("\r", "\n").splitlines():
+        text = line.strip()
+        lowered = text.lower()
+        if not text or lowered in {"version", "ch>"} or lowered.endswith("ch>"):
+            continue
+        if "tinysa" in lowered or "hw version" in lowered:
+            return text.replace("_", " ")
+
+    return "tinySA"

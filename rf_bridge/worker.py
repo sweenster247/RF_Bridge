@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from .config import BAUD, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
 from .scanner import read_frequencies_mhz, read_scan_dbm
 from .tinysa import send_command, wake_console
+from .utils import clean_tinysa_version
 
 
 class ScanWorker(QObject):
@@ -51,9 +52,10 @@ class ScanWorker(QObject):
             self.log.emit("Waking tinySA console…")
             wake_console(self.ser, debug_log=self._debug)
 
-            version = send_command(self.ser, "version", debug_log=self._debug).strip()
-            if version:
-                self._debug(f"[serial] version parsed={version.splitlines()[0] if version.splitlines() else version!r}")
+            version_output = send_command(self.ser, "version", debug_log=self._debug).strip()
+            version = clean_tinysa_version(version_output)
+            if version_output:
+                self._debug(f"[serial] version parsed={version!r}")
             else:
                 self._debug("[serial] version response was empty")
             self.log.emit("Reading tinySA frequency range…")
