@@ -18,6 +18,10 @@
 
 RF Bridge is a macOS desktop utility for live sound engineers, RF coordinators, and wireless technicians using a tinySA spectrum analyzer. It captures live RF scans, visualizes the spectrum in real time, and continuously writes Wireless Workbench-compatible CSV files for practical coordination workflows.
 
+RF Bridge is designed for practical RF workflows in the field, whether you’re coordinating wireless for a Sunday service, festival, corporate event, or theater production.
+
+The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
+
 ## What’s New in v1.9.5.25
 
 - Reduced live graph redraw work for capture overlays and Top RF Hit markers.
