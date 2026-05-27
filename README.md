@@ -1,7 +1,7 @@
 # RF Bridge
 
 <p align="center">
-  <img src="https://github.com/sweenster247/RF_Bridge/blob/main/assets/%20Logo.png" width="650" alt="RF Bridge Logo">
+  <img src="https://github.com/sweenster247/RF_Bridge/blob/main/assets/Logo.png" width="650" alt="RF Bridge Logo">
 </p>
 
 <p align="center">
