@@ -1399,18 +1399,37 @@ class RFBridgeWindow:
 
         self.demo_phase += 0.28
         peaks = [
-            (482.125, -48, 0.18),
-            (506.500, -56, 0.28),
-            (537.875, -51, 0.22),
+            (482.125, -48, 0.16),
+            (506.500, -56, 0.24),
+            (537.875, -51, 0.19),
+        ]
+        transient_spikes = [
+            (
+                random.uniform(472.0, 558.0),
+                random.uniform(-74.0, -60.0),
+                random.uniform(0.035, 0.09),
+            )
+            for _ in range(5)
         ]
         dbm = []
-        for freq in self.freqs_mhz:
-            floor = -94 + 2.5 * math.sin((freq * 0.11) + self.demo_phase)
-            level = floor + random.uniform(-1.8, 1.8)
+        for index, freq in enumerate(self.freqs_mhz):
+            floor = (
+                -94
+                + 2.8 * math.sin((freq * 0.11) + self.demo_phase)
+                + 1.4 * math.sin((freq * 0.53) - (self.demo_phase * 0.7))
+                + 0.9 * math.sin((index * 0.37) + (self.demo_phase * 1.8))
+            )
+            level = floor + random.gauss(0, 2.4) + random.uniform(-1.2, 1.2)
             for center, peak_level, width in peaks:
-                drift = 0.035 * math.sin(self.demo_phase + center)
+                drift = 0.055 * math.sin(self.demo_phase + center)
+                jitter = random.uniform(-1.4, 1.0)
                 strength = math.exp(-((freq - center - drift) ** 2) / (2 * width * width))
-                level = max(level, peak_level * strength + floor * (1 - strength))
+                level = max(level, (peak_level + jitter) * strength + floor * (1 - strength))
+            for center, spike_level, width in transient_spikes:
+                strength = math.exp(-((freq - center) ** 2) / (2 * width * width))
+                level = max(level, spike_level * strength + floor * (1 - strength))
+            if random.random() < 0.018:
+                level = max(level, random.uniform(-82.0, -68.0))
             dbm.append(level)
 
         self.latest_dbm = dbm

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.9.5.16
+- Added extra noise, transient spikes, and subtle floor movement to Demo Mode.
+- Refined the macOS app icon source so the RF Bridge artwork fills more of the icon without the extra bordered frame.
+
 ## v1.9.5.15
 - Added visual-only Demo Mode to the device dropdown.
 - Demo Mode simulates RF graph activity without writing CSV files or touching `wwb_scans`.
