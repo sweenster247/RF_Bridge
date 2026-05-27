@@ -16,7 +16,7 @@ def validate_frequency_list(freqs_mhz):
         )
 
 
-def read_frequencies_mhz(ser):
+def read_frequencies_mhz(ser, debug_log=None):
     """Read the tinySA frequency table using the proven v1.8 path.
 
     v1.9.4.x added retries/fallback sweep probing around startup. On some
@@ -26,7 +26,8 @@ def read_frequencies_mhz(ser):
     freqs_hz = parse_numbers(
         send_command(
             ser,
-            "frequencies"
+            "frequencies",
+            debug_log=debug_log,
         )
     )
 
@@ -40,9 +41,9 @@ def read_frequencies_mhz(ser):
     return freqs_mhz
 
 
-def read_scan_dbm(ser):
+def read_scan_dbm(ser, debug_log=None):
     values = parse_numbers(
-        send_command(ser, "data 1")
+        send_command(ser, "data 1", debug_log=debug_log)
     )
 
     if not values:

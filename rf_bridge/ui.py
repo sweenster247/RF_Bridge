@@ -1,4 +1,4 @@
-"""PySide6 / pyqtgraph RF Bridge v1.9.4.5 UI."""
+"""PySide6 / pyqtgraph RF Bridge v1.9.5.2 UI."""
 
 import bisect
 import json
@@ -73,6 +73,12 @@ THEMES = {
 
 APPEARANCE_OPTIONS = ["System", "Dark", "Light"]
 
+# Fixed RF display range. Keep the graph from re-scaling when the tinySA
+# connects, when live data arrives, or when guide/marker items are refreshed.
+RF_Y_MIN = -110
+RF_Y_MAX = -20
+RF_Y_RANGE = RF_Y_MAX - RF_Y_MIN
+
 
 class UiBridgeFactory:
     """Create a QObject signal bridge after PySide6 is available.
@@ -103,9 +109,9 @@ def format_seconds(seconds):
 
 
 class RFBridgeWindow:
-    def __init__(self, output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None):
-        from PySide6.QtCore import Qt, QThread, Signal, QMetaObject, Q_ARG, QTimer
-        from PySide6.QtGui import QAction
+    def __init__(self, output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None, debug_serial=False):
+        from PySide6.QtCore import Qt, QThread, Signal, QMetaObject, Q_ARG, QTimer, QSize
+        from PySide6.QtGui import QAction, QPixmap
         from PySide6.QtWidgets import (
             QApplication,
             QCheckBox,
@@ -137,6 +143,7 @@ class RFBridgeWindow:
         self.output_dir = output_dir
         self.gig_slug = gig_slug
         self.selected_port = selected_port
+        self.debug_serial = debug_serial
         self.freqs_mhz = []
         self.latest_dbm = []
         self.display_dbm = []
@@ -193,23 +200,92 @@ class RFBridgeWindow:
         self.window.closeEvent = self.handle_close_event
         self.app.aboutToQuit.connect(self.shutdown)
         self.window.setWindowTitle("RF Bridge")
-        self.window.resize(1580, 920)
+        self.window.resize(1640, 940)
 
         saved_geometry = self.settings.get_bytes("window_geometry")
         if saved_geometry:
             self.window.restoreGeometry(saved_geometry)
 
         root = QWidget()
-        root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(18, 18, 18, 14)
-        root_layout.setSpacing(12)
+        shell_layout = QHBoxLayout(root)
+        shell_layout.setContentsMargins(8, 8, 8, 8)
+        shell_layout.setSpacing(8)
+
+        sidebar_panel = QFrame()
+        sidebar_panel.setObjectName("navigationPanel")
+        sidebar_panel.setFixedWidth(285)
+        sidebar_layout = QVBoxLayout(sidebar_panel)
+        sidebar_layout.setContentsMargins(18, 18, 18, 18)
+        sidebar_layout.setSpacing(12)
+
+        brand_box = QVBoxLayout()
+        brand_box.setContentsMargins(0, 2, 0, 4)
+        brand_box.setSpacing(6)
+
+        self.sidebar_logo = QLabel()
+        self.sidebar_logo.setObjectName("sidebarLogo")
+        self.sidebar_logo.setFixedSize(145, 145)
+        logo_path = self.asset_path("sidebar-logo-dark.png")
+        if os.path.exists(logo_path):
+            logo_pixmap = QPixmap(logo_path)
+            if not logo_pixmap.isNull():
+                self.sidebar_logo.setPixmap(
+                    logo_pixmap.scaled(
+                        QSize(145, 145),
+                        self.Qt.KeepAspectRatio,
+                        self.Qt.SmoothTransformation,
+                    )
+                )
+        self.sidebar_logo.setAlignment(self.Qt.AlignCenter)
+
+        self.sidebar_title = QLabel("RF Bridge")
+        self.sidebar_title.setObjectName("sidebarTitle")
+        self.sidebar_title.setAlignment(self.Qt.AlignCenter)
+        self.sidebar_subtitle = QLabel("RF Spectrum Analyzer")
+        self.sidebar_subtitle.setObjectName("sidebarSubtitle")
+        self.sidebar_subtitle.setAlignment(self.Qt.AlignCenter)
+        self.sidebar_subtitle.setWordWrap(False)
+
+        brand_box.addWidget(self.sidebar_logo, alignment=self.Qt.AlignCenter)
+        brand_box.addWidget(self.sidebar_title)
+        brand_box.addWidget(self.sidebar_subtitle)
+        sidebar_layout.addLayout(brand_box)
+        sidebar_layout.addSpacing(16)
+
+        self.rf_scan_button = QPushButton("RF Scan")
+        self.mic_plot_nav_button = QPushButton("Markers / Mic Plot")
+        self.capture_nav_button = QPushButton("Capture Overlays")
+        self.preferences_nav_button = QPushButton("Preferences")
+        self.about_nav_button = QPushButton("About / Help")
+
+        for button in (
+            self.rf_scan_button,
+            self.mic_plot_nav_button,
+            self.capture_nav_button,
+            self.preferences_nav_button,
+            self.about_nav_button,
+        ):
+            button.setObjectName("sidebarButton")
+            button.setMinimumHeight(38)
+            button.setFlat(True)
+            sidebar_layout.addWidget(button)
+
+        self.rf_scan_button.setEnabled(False)
+        sidebar_layout.addStretch(1)
+
+        root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(8)
+
+        shell_layout.addWidget(sidebar_panel)
+        shell_layout.addLayout(root_layout, stretch=1)
 
         connection_panel = QFrame()
         connection_panel.setObjectName("connectionPanel")
         connection_layout = QGridLayout(connection_panel)
-        connection_layout.setContentsMargins(14, 12, 14, 12)
-        connection_layout.setHorizontalSpacing(10)
-        connection_layout.setVerticalSpacing(8)
+        connection_layout.setContentsMargins(10, 8, 10, 8)
+        connection_layout.setHorizontalSpacing(6)
+        connection_layout.setVerticalSpacing(4)
 
         self.status_dot = QLabel("●")
         self.status_dot.setObjectName("statusDot")
@@ -223,54 +299,86 @@ class RFBridgeWindow:
         self.version_label = QLabel("Device: —")
         self.range_label = QLabel("Range: —")
 
-        self.port_combo.setMinimumWidth(260)
-        self.port_combo.setMaximumWidth(420)
+        self.port_combo.setMinimumWidth(220)
+        self.port_combo.setMaximumWidth(330)
+        self.refresh_ports_button.setText("Refresh")
+        for _btn in (self.refresh_ports_button, self.connect_button, self.disconnect_button):
+            _btn.setMinimumHeight(26)
+            _btn.setMaximumHeight(30)
+        self.disconnect_button.setEnabled(False)
 
         connection_layout.addWidget(self.status_dot, 0, 0)
-        connection_layout.addWidget(self.connection_status, 0, 1, 1, 2)
+        connection_layout.addWidget(self.connection_status, 0, 1, 1, 3)
         connection_layout.addWidget(QLabel("Port"), 1, 0, 1, 1)
-        connection_layout.addWidget(self.port_combo, 1, 1, 1, 4)
-        connection_layout.addWidget(self.refresh_ports_button, 2, 0, 1, 2)
-        connection_layout.addWidget(self.connect_button, 2, 2)
-        connection_layout.addWidget(self.disconnect_button, 2, 3, 1, 2)
-        connection_layout.addWidget(self.version_label, 3, 0, 1, 5)
-        connection_layout.addWidget(self.range_label, 4, 0, 1, 5)
+        connection_layout.addWidget(self.port_combo, 1, 1, 1, 3)
+        connection_layout.addWidget(self.connect_button, 2, 0, 1, 1)
+        connection_layout.addWidget(self.disconnect_button, 2, 1, 1, 1)
+        connection_layout.addWidget(self.refresh_ports_button, 2, 2, 1, 2)
+        connection_layout.addWidget(self.version_label, 3, 0, 1, 4)
+        connection_layout.addWidget(self.range_label, 4, 0, 1, 4)
         connection_layout.setColumnStretch(1, 1)
-        connection_panel.setMaximumWidth(520)
+        connection_panel.setFixedWidth(330)
+        connection_panel.setMinimumHeight(160)
+        connection_panel.setMaximumHeight(175)
 
         self.overlay_panel = QFrame()
         self.overlay_panel.setObjectName("overlayPanel")
+        self.overlay_panel.setMinimumHeight(160)
+        self.overlay_panel.setMaximumHeight(175)
         overlay_layout = QVBoxLayout(self.overlay_panel)
-        overlay_layout.setContentsMargins(14, 12, 14, 12)
+        overlay_layout.setContentsMargins(14, 10, 14, 10)
         overlay_layout.setSpacing(8)
 
         overlay_header = QHBoxLayout()
+        self.overlay_icon = QLabel("▱")
+        self.overlay_icon.setObjectName("overlayHeaderIcon")
         self.overlay_title = QLabel("CAPTURE OVERLAYS")
         self.overlay_title.setObjectName("overlayTitle")
+        self.overlay_subtitle = QLabel("Load previously saved scans to overlay on the live RF data.")
+        self.overlay_subtitle.setObjectName("overlaySubtitle")
+        overlay_title_stack = QVBoxLayout()
+        overlay_title_stack.setContentsMargins(0, 0, 0, 0)
+        overlay_title_stack.setSpacing(1)
+        overlay_title_stack.addWidget(self.overlay_title)
+        overlay_title_stack.addWidget(self.overlay_subtitle)
         self.open_overlay_button = QPushButton("Open Overlay(s)…")
-        self.clear_overlay_button = QPushButton("Clear")
-        overlay_header.addWidget(self.overlay_title)
-        overlay_header.addStretch(1)
+        self.clear_overlay_button = QPushButton("Clear All")
+        overlay_header.addWidget(self.overlay_icon)
+        overlay_header.addLayout(overlay_title_stack, stretch=1)
         overlay_header.addWidget(self.open_overlay_button)
         overlay_header.addWidget(self.clear_overlay_button)
 
+        self.overlay_content_frame = QFrame()
+        self.overlay_content_frame.setObjectName("overlayContentFrame")
+        overlay_content_layout = QVBoxLayout(self.overlay_content_frame)
+        overlay_content_layout.setContentsMargins(12, 8, 12, 8)
+        overlay_content_layout.setSpacing(4)
         self.overlay_controls_row = QHBoxLayout()
         self.overlay_controls_row.setSpacing(10)
         self.overlay_empty_label = QLabel("No overlays loaded")
         self.overlay_empty_label.setObjectName("overlayEmptyLabel")
+        self.overlay_empty_label.setAlignment(self.Qt.AlignCenter)
+        self.overlay_empty_hint = QLabel("Click “Open Overlay(s)…” to load one or more capture files (CSV).")
+        self.overlay_empty_hint.setObjectName("overlayEmptyHint")
+        self.overlay_empty_hint.setAlignment(self.Qt.AlignCenter)
+        self.overlay_controls_row.addStretch(1)
         self.overlay_controls_row.addWidget(self.overlay_empty_label)
         self.overlay_controls_row.addStretch(1)
+        overlay_content_layout.addStretch(1)
+        overlay_content_layout.addLayout(self.overlay_controls_row)
+        overlay_content_layout.addWidget(self.overlay_empty_hint)
+        overlay_content_layout.addStretch(1)
 
         overlay_layout.addLayout(overlay_header)
-        overlay_layout.addLayout(self.overlay_controls_row)
+        overlay_layout.addWidget(self.overlay_content_frame, stretch=1)
 
         top_layout = QHBoxLayout()
-        top_layout.setSpacing(12)
-        top_layout.addWidget(connection_panel, stretch=0)
+        top_layout.setSpacing(10)
         top_layout.addWidget(self.overlay_panel, stretch=1)
+        top_layout.addWidget(connection_panel, stretch=0)
 
         content_layout = QHBoxLayout()
-        content_layout.setSpacing(18)
+        content_layout.setSpacing(8)
 
         pg.setConfigOptions(antialias=True)
         self.plot = pg.PlotWidget()
@@ -280,8 +388,7 @@ class RFBridgeWindow:
         self.plot.setLabel("bottom", "Frequency", units="MHz")
         self.plot.setLabel("left", "Amplitude", units="dBm")
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
-        self.plot.setYRange(-110, -20, padding=0)
-        self.plot.disableAutoRange()
+        self.lock_plot_axes()
 
         axis_pen = pg.mkPen(self.theme["axis"])
         self.plot.getAxis("bottom").setPen(axis_pen)
@@ -301,9 +408,9 @@ class RFBridgeWindow:
 
         side_panel = QFrame()
         side_panel.setObjectName("sidePanel")
-        side_panel.setFixedWidth(350)
+        side_panel.setFixedWidth(330)
         side_layout = QVBoxLayout(side_panel)
-        side_layout.setContentsMargins(16, 16, 16, 16)
+        side_layout.setContentsMargins(12, 12, 12, 12)
         side_layout.setSpacing(12)
 
         self.summary_label = QLabel("RF SUMMARY\n──────────────────────\n\nConnect to tinySA to begin.")
@@ -343,14 +450,14 @@ class RFBridgeWindow:
         self.log_box = QTextEdit()
         self.log_box.setObjectName("logBox")
         self.log_box.setReadOnly(True)
-        self.log_box.setMaximumHeight(125)
+        self.log_box.setMaximumHeight(96)
         self.status_label = QLabel("")
         self.status_label.setObjectName("statusLabel")
         self.status_label.setMinimumHeight(38)
         self.status_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
 
         root_layout.addLayout(top_layout)
-        root_layout.addLayout(content_layout, stretch=1)
+        root_layout.addLayout(content_layout, stretch=2)
         root_layout.addWidget(self.log_box)
         root_layout.addWidget(self.status_label)
         self.window.setCentralWidget(root)
@@ -368,6 +475,10 @@ class RFBridgeWindow:
         self.return_live_button.clicked.connect(self.return_to_live)
         self.open_overlay_button.clicked.connect(self.open_capture_overlays)
         self.clear_overlay_button.clicked.connect(self.clear_capture_overlays)
+        self.mic_plot_nav_button.clicked.connect(self.open_mic_plot)
+        self.capture_nav_button.clicked.connect(self.open_capture_overlays)
+        self.preferences_nav_button.clicked.connect(self.open_preferences)
+        self.about_nav_button.clicked.connect(self.open_about)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_move)
         self.window.destroyed.connect(self.shutdown)
 
@@ -398,27 +509,86 @@ class RFBridgeWindow:
                 pass
         return "Dark"
 
+    def asset_path(self, filename):
+        # Works from source and from PyInstaller app bundles where assets are
+        # copied into the runtime directory.
+        candidates = [
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", filename),
+            os.path.join(os.path.dirname(__file__), "..", "assets", filename),
+        ]
+        bundle_root = getattr(__import__("sys"), "_MEIPASS", None)
+        if bundle_root:
+            candidates.insert(0, os.path.join(bundle_root, "assets", filename))
+        for candidate in candidates:
+            candidate = os.path.abspath(candidate)
+            if os.path.exists(candidate):
+                return candidate
+        return os.path.abspath(candidates[-1])
+
     def stylesheet(self):
         t = self.theme
         return f"""
         QMainWindow, QWidget {{ background: {t['window_bg']}; color: {t['text']}; font-family: Arial, Helvetica, sans-serif; }}
         QMenuBar, QMenu {{ background: {t['panel_bg']}; color: {t['text']}; border: 1px solid {t['border']}; }}
         QMenuBar::item:selected, QMenu::item:selected {{ background: {t['button_hover']}; }}
-        QFrame#connectionPanel, QFrame#overlayPanel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
+        QFrame#connectionPanel, QFrame#overlayPanel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 10px; }}
+        QFrame#overlayContentFrame {{ background: {t['window_bg']}; border: 1px dashed {t['border']}; border-radius: 8px; }}
+        QFrame#navigationPanel {{ background: {t['side_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
         QFrame#sidePanel {{ background: {t['side_bg']}; border-left: 1px solid {t['border']}; }}
         QLabel#summaryLabel, QLabel#hoverLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; }}
         QLabel#hoverLabel {{ background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 8px; }}
         QLabel#statusLabel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }}
         QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; }}
         QLabel#connectionStatus {{ font-weight: bold; }}
-        QLabel#overlayTitle {{ font-weight: bold; font-family: Menlo, Monaco, Consolas, monospace; }}
-        QLabel#overlayEmptyLabel {{ color: {t['muted_text']}; }}
+        QLabel#overlayHeaderIcon {{ color: {t['text']}; font-size: 26px; font-weight: bold; padding-right: 4px; background: transparent; }}
+        QLabel#overlayTitle {{ font-weight: bold; font-family: Menlo, Monaco, Consolas, monospace; font-size: 15px; background: transparent; }}
+        QLabel#overlaySubtitle {{ color: {t['muted_text']}; font-size: 12px; background: transparent; }}
+        QLabel#overlayEmptyLabel {{ color: {t['text']}; font-size: 16px; font-weight: bold; background: transparent; padding: 2px; }}
+        QLabel#overlayEmptyHint {{ color: {t['muted_text']}; font-size: 12px; background: transparent; padding: 2px; }}
+        QLabel#sidebarLogo {{ background: transparent; border: 0px; }}
+        QLabel#sidebarTitle {{ font-weight: bold; color: {t['text']}; font-size: 24px; background: transparent; }}
+        QLabel#sidebarSubtitle {{ color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; letter-spacing: 0.2px; background: transparent; padding-bottom: 2px; }}
+        QPushButton#sidebarButton {{ text-align: left; border: 0px; background: transparent; color: {t['text']}; padding: 9px 12px; border-radius: 7px; }}
+        QPushButton#sidebarButton:hover {{ background: {t['button_hover']}; }}
+        QPushButton#sidebarButton:disabled {{ color: {t['connected']}; background: {t['hover_bg']}; }}
         QTextEdit#logBox {{ background: {t['log_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding: 6px; }}
         QPushButton, QComboBox, QLineEdit {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
         QPushButton:hover, QComboBox:hover {{ background: {t['button_hover']}; }}
         QPushButton:pressed {{ background: {t['button_pressed']}; }}
         QPushButton:disabled {{ color: {t['button_disabled_text']}; background: {t['button_disabled_bg']}; }}
         """
+
+    def lock_plot_axes(self, preserve_x=False):
+        """Keep the RF graph's amplitude scale stable.
+
+        pyqtgraph may revisit bounds when data, hover cursors, mic markers,
+        top-hit lines, or capture overlays are refreshed. This keeps the
+        display locked to RF Bridge's normal dBm view so connecting a tinySA
+        does not expand or re-base the vertical axis.
+        """
+        if not hasattr(self, "plot"):
+            return
+
+        view_box = self.plot.getViewBox()
+        try:
+            view_box.disableAutoRange(axis=view_box.XYAxes)
+            view_box.setMouseEnabled(x=True, y=False)
+            view_box.setDefaultPadding(0)
+            view_box.setLimits(
+                yMin=RF_Y_MIN,
+                yMax=RF_Y_MAX,
+                minYRange=RF_Y_RANGE,
+                maxYRange=RF_Y_RANGE,
+            )
+        except Exception:
+            pass
+
+        self.plot.disableAutoRange()
+        self.plot.enableAutoRange(x=False, y=False)
+        self.plot.setYRange(RF_Y_MIN, RF_Y_MAX, padding=0)
+
+        if not preserve_x and self.freqs_mhz:
+            self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
 
     def create_menus(self):
         file_menu = self.window.menuBar().addMenu("File")
@@ -527,8 +697,7 @@ class RFBridgeWindow:
         self.peak_history = []
 
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
-        self.plot.setYRange(-110, -20, padding=0)
-        self.plot.disableAutoRange()
+        self.lock_plot_axes(preserve_x=True)
         self.cursor_line.setPos(self.freqs_mhz[0])
         self.render_mic_markers()
         self.live_curve.setData(self.freqs_mhz, self.display_dbm)
@@ -552,8 +721,7 @@ class RFBridgeWindow:
         self.last_cursor_index = None
         self.return_live_button.setEnabled(False)
         self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
-        self.plot.setYRange(-110, -20, padding=0)
-        self.plot.disableAutoRange()
+        self.lock_plot_axes(preserve_x=True)
         self.cursor_line.setPos(self.freqs_mhz[0])
         self.render_mic_markers()
         self.render_scan(self.latest_dbm)
@@ -625,6 +793,7 @@ class RFBridgeWindow:
         if not hasattr(self, "overlay_menu"):
             return
         self.overlay_menu.clear()
+        self.capture_overlay_actions = []
         if not self.capture_overlays:
             empty_action = self.QAction("No capture overlays loaded", self.window)
             empty_action.setEnabled(False)
@@ -660,9 +829,16 @@ class RFBridgeWindow:
         if not self.capture_overlays:
             self.overlay_empty_label = QLabel("No overlays loaded")
             self.overlay_empty_label.setObjectName("overlayEmptyLabel")
+            self.overlay_empty_label.setAlignment(self.Qt.AlignCenter)
+            self.overlay_controls_row.addStretch(1)
             self.overlay_controls_row.addWidget(self.overlay_empty_label)
             self.overlay_controls_row.addStretch(1)
+            if hasattr(self, "overlay_empty_hint"):
+                self.overlay_empty_hint.setVisible(True)
             return
+
+        if hasattr(self, "overlay_empty_hint"):
+            self.overlay_empty_hint.setVisible(False)
 
         for index, capture in enumerate(self.capture_overlays[:6]):
             label = capture.get("name", f"Capture {index + 1}")
@@ -682,11 +858,32 @@ class RFBridgeWindow:
 
         self.overlay_controls_row.addStretch(1)
 
+    def sync_overlay_controls(self):
+        """Keep overlay menu actions and panel checkboxes in sync without rebuilding.
+
+        Rebuilding the overlay panel from inside a checkbox/menu toggle can delete
+        the widget that emitted the signal while Qt is still processing it. On
+        macOS that can crash the app. Sync the existing controls instead.
+        """
+        for index, action in enumerate(getattr(self, "capture_overlay_actions", [])):
+            if index >= len(self.capture_overlays):
+                continue
+            action.blockSignals(True)
+            action.setChecked(bool(self.capture_overlays[index].get("visible", True)))
+            action.blockSignals(False)
+
+        for index, checkbox in enumerate(getattr(self, "overlay_checkbox_widgets", [])):
+            if index >= len(self.capture_overlays):
+                continue
+            checkbox.blockSignals(True)
+            checkbox.setChecked(bool(self.capture_overlays[index].get("visible", True)))
+            checkbox.blockSignals(False)
+
     def set_overlay_visible(self, index, visible):
         if 0 <= index < len(self.capture_overlays):
             self.capture_overlays[index]["visible"] = bool(visible)
             self.render_capture_overlays()
-            self.rebuild_overlay_panel()
+            self.sync_overlay_controls()
             self.update_status()
 
     def clear_capture_overlays(self):
@@ -1097,7 +1294,7 @@ class RFBridgeWindow:
         self.connect_button.setEnabled(False)
         self.disconnect_button.setEnabled(True)
         self.worker_thread = self.QThread()
-        self.worker = ScanWorker(port, self.refresh_seconds)
+        self.worker = ScanWorker(port, self.refresh_seconds, debug_serial=self.debug_serial)
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.start)
         self.worker.connected.connect(self.ui_bridge.connected)
@@ -1136,8 +1333,7 @@ class RFBridgeWindow:
         self.display_dbm = []
         self.reset_peaks()
         self.plot.setXRange(min(freqs_mhz), max(freqs_mhz), padding=0)
-        self.plot.setYRange(-110, -20, padding=0)
-        self.plot.disableAutoRange()
+        self.lock_plot_axes(preserve_x=True)
         self.cursor_line.setPos(freqs_mhz[0])
         self.render_mic_markers()
         self.version_label.setText(f"Device: {version or 'tinySA'}")
@@ -1313,6 +1509,7 @@ class RFBridgeWindow:
         self.live_curve.setData(self.freqs_mhz, dbm)
         self.render_capture_overlays()
         self.update_top_frequencies(dbm)
+        self.lock_plot_axes(preserve_x=True)
         self.plot.setTitle(f"RF Bridge - {self.gig_slug} - {time_12h()}", color=self.theme["text"], size="16pt")
 
     def update_top_frequencies(self, dbm):
@@ -1450,11 +1647,12 @@ class RFBridgeWindow:
         return exit_code
 
 
-def run_ui(output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None):
+def run_ui(output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None, debug_serial=False):
     window = RFBridgeWindow(
         output_dir=output_dir,
         gig_slug=gig_slug,
         ui_update_seconds=ui_update_seconds,
         selected_port=selected_port,
+        debug_serial=debug_serial,
     )
     return window.run()

@@ -1,9 +1,69 @@
 # Changelog
 
+## v1.9.5.9
+- Fixed a UI auto-connect regression where `debug_serial` was not stored on the main window.
+- This prevented the scan worker from starting after tinySA auto-detection.
+
+## v1.9.5.8
+- Restored the confirmed-working v1.9.4.10 tinySA prompt-based serial read path.
+- Kept v1.9.5.7 debug serial TX/RX logging around the restored command flow.
+- Bumped package and macOS bundle metadata to 1.9.5.8.
+
+## v1.9.5.7
+- Added debug serial logging mode for tinySA troubleshooting
+- Added command TX/RX byte counts and response previews
+- Added serial open/close lifecycle logging
+
+
+## v1.9.5.6
+- Increased sidebar navigation text size for readability
+- Removed missing Sans-serif font reference to avoid Qt font warnings
+- Cleaned connection panel label styling for Status, Device, Port, and Range
+- Preserved v1.9.5 UI layout and current tinySA behavior
+
+## v1.9.5.6
+- Restored the proven v1.9.4.10 tinySA serial command flow.
+- Hard-locked tinySA scan reads to `data 1`.
+- Removed aggressive startup command retry/fallback behavior that could hang the app or desynchronize the tinySA console.
+- Preserved v1.9.5.3 UI/sidebar/layout polish.
+- Preserved graph axis/cursor stability and overlay toggle fixes.
+
+## v1.9.5.2
+- Refined sidebar branding with a larger clean logo asset
+- Moved RF Bridge title and “RF Spectrum Analyzer” subtitle below the logo
+- Widened the sidebar so the subtitle no longer truncates
+- Reduced dashboard padding so the main RF graph fills more of the available window
+- Tightened overlay and connected-device card heights
+- Preserved the v1.9.4.10 tinySA connection path and recent axis/cursor fixes
+
+
+## v1.9.5.1
+- Widened sidebar and improved RF Spectrum Analyzer label spacing
+- Enlarged sidebar logo and reduced nested-box appearance
+- Expanded main content area within the current app border
+- Tightened dashboard panel spacing
+
+## v1.9.5
+- Refined main application layout with a polished left sidebar and top-left RF Bridge logo treatment
+- Reworked the Capture Overlays panel into a cleaner centered card with helper text
+- Moved/condensed connected-device controls into a compact top-right panel aligned with the RF Summary column
+- Removed visual clutter behind RF Bridge and Capture Overlays labels
+- Preserved confirmed-working v1.9.4.10 tinySA connection behavior and v1.9.4.11/v1.9.4.12 UI stability fixes
+
+## v1.9.4.12
+- Added a left-side navigation rail for RF Scan, Markers / Mic Plot, Capture Overlays, Preferences, and About / Help
+- Moved the connected-device panel to the top-right of the main window
+- Recentered and constrained the Capture Overlays panel so it matches the device panel height and no longer leaves awkward empty space
+- Centered the empty-overlay state text
+- Kept the confirmed-working v1.9.4.10 tinySA connection behavior and v1.9.4.11 axis/cursor/overlay-toggle fixes
+
 ## v1.9.4.11
 - Fixed graph auto-resize issue when moving the mouse vertically across the plot
+- Locked the dBm vertical range during tinySA connect and first live scan
 - Locked plot auto-ranging for cursor, threshold, mic marker, and Top 8 guide lines
 - Constrained hover readout height so the main window layout remains stable
+- Fixed capture overlay show/hide crash when overlays are detoggled
+- Overlay toggles now sync without rebuilding/deleting active Qt widgets
 - Based on the confirmed-working v1.9.4.10 tinySA connection path
 
 ## v1.9.4.10
@@ -182,3 +242,8 @@
 - tinySA → WWB CSV bridge
 - Real-time RF graph
 - Peak hold modes
+
+## v1.9.5.3
+- Tightened connected-device panel layout and reduced Connect/Disconnect button footprint.
+- Expanded main content area and improved sidebar/logo spacing.
+- Added more defensive tinySA serial command retries during startup and scan reads.

@@ -8,19 +8,35 @@ from serial.tools import list_ports
 from .config import BAUD
 
 
-def send_command(ser, cmd, delay_seconds=0.2):
+def send_command(ser, cmd, delay_seconds=0.2, response_window_seconds=5.0, debug_log=None):
     """Send a tinySA console command and return text output.
 
-    v1.9.4.x temporarily became too aggressive about draining the serial
-    buffer and pausing/resuming the tinySA sweep before reading frequencies.
-    Some tinySA units tolerate that poorly and return an empty frequency list.
-
-    This restores the proven v1.8-style command path while keeping the
-    optional delay_seconds argument used by newer callers.
+    v1.9.5.8 restores the confirmed-working v1.9.4.10 prompt-based read path
+    while keeping the debug serial logging added in v1.9.5.7.
     """
-    ser.write((cmd + "\r").encode())
+    if debug_log is not None:
+        port = getattr(ser, "port", "unknown")
+        is_open = getattr(ser, "is_open", None)
+        timeout = getattr(ser, "timeout", None)
+        debug_log(f"[serial] CMD {cmd!r} on {port}; open={is_open}; timeout={timeout}")
+
+    payload = (cmd + "\r").encode()
+    if debug_log is not None:
+        debug_log(f"[serial] TX bytes={payload!r}")
+
+    ser.write(payload)
     time.sleep(delay_seconds)
-    return ser.read_until(b"ch> ").decode(errors="ignore")
+
+    response = ser.read_until(b"ch> ", size=None).decode(errors="ignore")
+    if debug_log is not None:
+        raw = response.encode(errors="replace")
+        debug_log(f"[serial] RX bytes={len(raw)}")
+        preview = response.replace("\r", "\\r").replace("\n", "\\n")
+        if len(preview) > 240:
+            preview = preview[:240] + "..."
+        debug_log(f"[serial] RX preview={preview!r}")
+
+    return response
 
 
 def looks_like_tinysa(*values):

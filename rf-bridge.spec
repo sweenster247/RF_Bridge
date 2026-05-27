@@ -51,7 +51,7 @@ a = Analysis(
     ['rf-bridge.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets', 'assets')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -99,8 +99,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleDisplayName': 'RF Bridge',
         'CFBundleName': 'RF Bridge',
-        'CFBundleShortVersionString': '1.9.4.8',
-        'CFBundleVersion': '1.9.4.8',
+        'CFBundleShortVersionString': '1.9.5.9',
+        'CFBundleVersion': '1.9.5.9',
         'NSHighResolutionCapable': True,
     },
 )

@@ -19,11 +19,12 @@ class ScanWorker(QObject):
     error = Signal(str)
     log = Signal(str)
 
-    def __init__(self, port, refresh_seconds, baud=BAUD):
+    def __init__(self, port, refresh_seconds, baud=BAUD, debug_serial=False):
         super().__init__()
         self.port = port
         self.refresh_seconds = refresh_seconds
         self.baud = baud
+        self.debug_serial = debug_serial
         self.ser = None
         self.timer = None
         self.freqs_mhz = []
@@ -33,13 +34,20 @@ class ScanWorker(QObject):
     @Slot()
     def start(self):
         try:
+            self._debug(f"[serial] Opening {self.port} @ {self.baud}; timeout={TINYSA_SERIAL_TIMEOUT_SECONDS}")
             self.ser = serial.Serial(self.port, self.baud, timeout=TINYSA_SERIAL_TIMEOUT_SECONDS)
+            self._debug(f"[serial] Open successful; is_open={self.ser.is_open}")
             self.log.emit(f"Waiting {TINYSA_STARTUP_SETTLE_SECONDS:g}s for tinySA console…")
             time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)
 
-            version = send_command(self.ser, "version").strip()
+            version = send_command(self.ser, "version", debug_log=self._debug).strip()
+            if version:
+                self._debug(f"[serial] version parsed={version.splitlines()[0] if version.splitlines() else version!r}")
+            else:
+                self._debug("[serial] version response was empty")
             self.log.emit("Reading tinySA frequency range…")
-            self.freqs_mhz = read_frequencies_mhz(self.ser)
+            self.freqs_mhz = read_frequencies_mhz(self.ser, debug_log=self._debug)
+            self._debug(f"[serial] parsed frequency points={len(self.freqs_mhz)}")
 
             self.running = True
             self.connected.emit(self.port, version, self.freqs_mhz)
@@ -67,7 +75,8 @@ class ScanWorker(QObject):
             return
 
         try:
-            dbm = read_scan_dbm(self.ser)
+            dbm = read_scan_dbm(self.ser, debug_log=self._debug)
+            self._debug(f"[serial] parsed scan points={len(dbm)}")
         except Exception as exc:
             # During app shutdown the serial port may already be closing. Do not
             # surface that as a user-facing scan error.
@@ -104,3 +113,11 @@ class ScanWorker(QObject):
 
         self._stopped_emitted = True
         self.disconnected.emit()
+
+    def _debug(self, message):
+        if self.debug_serial:
+            self.log.emit(message)
+            try:
+                print(message, flush=True)
+            except Exception:
+                pass

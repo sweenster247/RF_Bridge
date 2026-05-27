@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility launcher for RF Bridge v1.6.2."""
+"""Compatibility launcher for RF Bridge."""
 
 from rf_bridge.app import main
 

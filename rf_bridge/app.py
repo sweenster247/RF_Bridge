@@ -73,6 +73,12 @@ def build_parser():
         help="Initial UI refresh interval in seconds. Can also be changed from the UI."
     )
 
+    parser.add_argument(
+        "--debug-serial",
+        action="store_true",
+        help="Log detailed tinySA serial TX/RX diagnostics to the app log and terminal."
+    )
+
     return parser
 
 
@@ -213,6 +219,7 @@ def main(argv=None):
             gig_slug=gig_slug,
             ui_update_seconds=args.refresh,
             selected_port=args.port,
+            debug_serial=args.debug_serial,
         )
         return
 
