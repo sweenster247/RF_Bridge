@@ -22,13 +22,12 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.6
+## What’s New in v1.9.6.1
 
-- Added right-click Mic Plot marker creation directly from the RF graph.
-- Added right-click marker removal from the RF graph.
-- Staggered nearby Mic Plot labels so close marker frequencies remain readable.
-- Expanded the fixed RF amplitude range to `-110 dBm` through `-10 dBm`.
-- Reinforced Y-axis locking so high-amplitude traces do not shift the scan view.
+- Added right-click marker controls directly on Mic Plot label boxes.
+- Improved Mic Plot label staggering for close frequencies.
+- Shifted Mic Plot labels higher in the RF graph.
+- Updated Gatekeeper notes for first launch on unsigned macOS builds.
 
 ## Features
 
@@ -84,9 +83,10 @@ Download the latest release from the GitHub Releases page.
 
 RF Bridge is currently unsigned. On first launch:
 
-1. Right-click `RF Bridge.app`
-2. Select `Open`
-3. Click `Open` again when prompted
+1. Select `Done` on the “RF Bridge” Not Opened prompt.
+2. Open `System Settings`.
+3. Go to `Privacy & Security`.
+4. Scroll to the Security section near the bottom and select `Run Anyway` for RF Bridge.
 
 After the first launch, macOS should remember the application.
 
@@ -133,8 +133,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.6-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.6-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.6.1-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.6.1-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

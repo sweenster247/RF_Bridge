@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.9.6.1
+- Added right-click marker controls directly on Mic Plot label boxes.
+- Improved Mic Plot label staggering so close labels are separated based on the visible scan width.
+- Shifted the Mic Plot label lanes higher in the RF graph.
+- Updated README Gatekeeper instructions for the unsigned macOS app prompt.
+
 ## v1.9.6
 - Added a graph right-click menu for creating Mic Plot markers at the clicked frequency with a name-only prompt.
 - Added graph right-click removal for visible Mic Plot markers using `Remove Marker: Name`.

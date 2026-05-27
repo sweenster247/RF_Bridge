@@ -96,8 +96,9 @@ RF_Y_MIN = -110
 RF_Y_MAX = -10
 RF_Y_RANGE = RF_Y_MAX - RF_Y_MIN
 MIC_MARKER_HIT_RADIUS_MHZ = 0.25
-MIC_MARKER_LABEL_LANES = [-28, -40, -52, -64]
-MIC_MARKER_LABEL_CLUSTER_MHZ = 0.35
+MIC_MARKER_LABEL_LANES = [-18, -30, -42, -54]
+MIC_MARKER_LABEL_MIN_GAP_MHZ = 8.0
+MIC_MARKER_LABEL_GAP_RATIO = 0.075
 
 
 class UiBridgeFactory:
@@ -1334,7 +1335,9 @@ class RFBridgeWindow:
 
         event.accept()
         marker_index, marker = self.nearest_mic_marker(freq)
+        self.show_mic_marker_context_menu(freq, marker_index, marker)
 
+    def show_mic_marker_context_menu(self, freq_mhz, marker_index=None, marker=None):
         from PySide6.QtGui import QCursor
 
         menu = self.QMenu(self.window)
@@ -1345,11 +1348,21 @@ class RFBridgeWindow:
             )
             menu.addSeparator()
 
-        add_action = menu.addAction(f"Add Mic Marker at {freq:.3f} MHz...")
+        add_action = menu.addAction(f"Add Mic Marker at {freq_mhz:.3f} MHz...")
         add_action.triggered.connect(
-            lambda _checked=False, marker_freq=freq: self.prompt_add_mic_marker(marker_freq)
+            lambda _checked=False, marker_freq=freq_mhz: self.prompt_add_mic_marker(marker_freq)
         )
         menu.exec(QCursor.pos())
+
+    def on_mic_marker_label_click(self, event, marker_index, freq_mhz):
+        if event.button() != self.Qt.RightButton:
+            return
+
+        event.accept()
+        marker = None
+        if 0 <= marker_index < len(self.mic_markers):
+            marker = self.mic_markers[marker_index]
+        self.show_mic_marker_context_menu(freq_mhz, marker_index, marker)
 
     def prompt_add_mic_marker(self, freq_mhz):
         from PySide6.QtWidgets import QInputDialog
@@ -1405,6 +1418,12 @@ class RFBridgeWindow:
     def mic_marker_label_positions(self, visible_markers):
         placements = {}
         lane_last_freqs = [None] * len(MIC_MARKER_LABEL_LANES)
+        if self.freqs_mhz:
+            span = max(self.freqs_mhz) - min(self.freqs_mhz)
+        else:
+            marker_freqs = [float(marker["frequency_mhz"]) for _index, marker in visible_markers]
+            span = max(marker_freqs) - min(marker_freqs) if marker_freqs else 0
+        label_gap_mhz = max(MIC_MARKER_LABEL_MIN_GAP_MHZ, span * MIC_MARKER_LABEL_GAP_RATIO)
 
         for index, marker in sorted(
             visible_markers,
@@ -1413,7 +1432,7 @@ class RFBridgeWindow:
             freq = float(marker["frequency_mhz"])
             lane_index = 0
             for candidate, last_freq in enumerate(lane_last_freqs):
-                if last_freq is None or abs(freq - last_freq) > MIC_MARKER_LABEL_CLUSTER_MHZ:
+                if last_freq is None or abs(freq - last_freq) > label_gap_mhz:
                     lane_index = candidate
                     break
             else:
@@ -1468,6 +1487,11 @@ class RFBridgeWindow:
             # Nearby markers use staggered lanes so labels stay readable.
             label.setPos(freq, label_positions.get(index, MIC_MARKER_LABEL_LANES[0]))
             label.setZValue(20)
+            label.setAcceptedMouseButtons(self.Qt.RightButton)
+            label.mouseClickEvent = (
+                lambda event, marker_index=index, marker_freq=freq:
+                self.on_mic_marker_label_click(event, marker_index, marker_freq)
+            )
             self.plot.addItem(line, ignoreBounds=True)
             self.plot.addItem(label, ignoreBounds=True)
             self.mic_marker_items.extend([line, label])
