@@ -1,5 +1,12 @@
-build/
-dist/
+# WWB Test Scans
 wwb_scans/
 wwbscans/
+
+#Build and Publish
 scripts/publish_release.sh
+
+# PyInstaller / app packaging
+*.app
+*.dmg
+build/
+dist/
