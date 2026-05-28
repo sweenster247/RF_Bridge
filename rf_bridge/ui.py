@@ -883,6 +883,10 @@ class RFBridgeWindow:
         if freq is not None:
             marker_index, marker = self.nearest_mic_marker(freq)
             if marker is not None:
+                edit_action = menu.addAction(f"Edit Marker: {marker['name']}...")
+                edit_action.triggered.connect(
+                    lambda _checked=False, index=marker_index: self.prompt_edit_mic_marker(index)
+                )
                 remove_action = menu.addAction(f"Remove Marker: {marker['name']}")
                 remove_action.triggered.connect(
                     lambda _checked=False, index=marker_index: self.remove_mic_marker(index)
@@ -1578,6 +1582,10 @@ class RFBridgeWindow:
 
         menu = self.QMenu(self.window)
         if marker is not None:
+            edit_action = menu.addAction(f"Edit Marker: {marker['name']}...")
+            edit_action.triggered.connect(
+                lambda _checked=False, index=marker_index: self.prompt_edit_mic_marker(index)
+            )
             remove_action = menu.addAction(f"Remove Marker: {marker['name']}")
             remove_action.triggered.connect(
                 lambda _checked=False, index=marker_index: self.remove_mic_marker(index)
@@ -1634,6 +1642,46 @@ class RFBridgeWindow:
 
         self.render_mic_markers()
         self.log(f"Mic marker added: {name} at {freq_mhz:.3f} MHz")
+
+    def prompt_edit_mic_marker(self, marker_index):
+        from PySide6.QtWidgets import QInputDialog
+
+        if not (0 <= marker_index < len(self.mic_markers)):
+            return
+
+        marker = dict(self.mic_markers[marker_index])
+        current_name = str(marker.get("name", "")).strip()
+        freq_mhz = float(marker.get("frequency_mhz", 0.0))
+
+        name, ok = QInputDialog.getText(
+            self.window,
+            "Edit Mic Marker",
+            f"Marker name for {freq_mhz:.3f} MHz:",
+            text=current_name,
+        )
+        if not ok:
+            return
+
+        name = name.strip()
+        if not name:
+            self.show_error("Marker name is required.")
+            return
+
+        updated_markers = list(self.mic_markers)
+        marker["name"] = name
+        updated_markers[marker_index] = marker
+
+        try:
+            self.mic_markers = save_markers(self.settings, updated_markers)
+        except ValueError as exc:
+            self.show_error(str(exc))
+            return
+
+        self.render_mic_markers()
+        if current_name and current_name != name:
+            self.log(f"Mic marker renamed: {current_name} → {name}")
+        else:
+            self.log(f"Mic marker updated: {name}")
 
     def remove_mic_marker(self, marker_index):
         if not (0 <= marker_index < len(self.mic_markers)):

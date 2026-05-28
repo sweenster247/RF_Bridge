@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.9.6.9
+
+- Added right-click Edit Marker action for mic markers.
+- Marker edit opens a focused rename dialog with the selected marker prefilled.
+- Existing marker frequency, color, and visibility are preserved when renaming.
+- Capture overlay organization and 1.9.6.8 filename workflow remain unchanged.
+
 ## v1.9.6.8
 
 - Grouped Capture Overlays into Morning, Afternoon, and Evening sections for cleaner show-day comparison.

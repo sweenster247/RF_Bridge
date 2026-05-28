@@ -22,13 +22,12 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.6.8
+## What’s New in v1.9.6.9
 
-- Capture overlays are now grouped into Morning, Afternoon, and Evening sections.
-- Each overlay section shows the latest four captures first, with older captures still available from the Overlays menu.
-- Auto Trace overlays now follow the same daypart workflow and retain the latest four auto traces per section.
-- CSV capture filenames now prioritize RF show-day readability: `Daypart_hh-mmAM_MM-DD_session_device.csv`.
-- Graceful tinySA recovery remains included from v1.9.6.7: RF Bridge attempts one automatic reconnect before recommending a device/app restart.
+- Marker labels now support right-click editing directly from the plot.
+- Choosing **Edit Marker** opens a focused rename dialog with the selected mic marker pre-filled.
+- Marker frequency, color, and visibility are preserved when renaming.
+- Capture overlay grouping and daypart-based CSV naming remain included from v1.9.6.8.
 
 ## Features
 
@@ -137,8 +136,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.6.8-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.6.8-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.6.9-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.6.9-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:
