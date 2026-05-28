@@ -68,7 +68,8 @@ def run_headless(ser, output_dir, gig_slug, freqs_mhz):
             gig_slug,
             freqs_mhz,
             dbm,
-            "tinySA"
+            "tinySA",
+            "12h"
         )
 
         time.sleep(SCAN_INTERVAL_SECONDS)

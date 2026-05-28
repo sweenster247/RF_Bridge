@@ -23,6 +23,7 @@ from .version import __version__
 
 
 REFRESH_MODES = [0.5, 1, 2, 5, 10]
+FILENAME_TIME_FORMATS = [("12-hour time", "12h"), ("24-hour time", "24h")]
 MAX_CONSECUTIVE_SCAN_MISMATCHES = 3
 MAX_AUTO_TRACE_OVERLAYS = 6
 FREQUENCY_DISPLAY_STEP_MHZ = 0.005
@@ -198,15 +199,15 @@ def compact_capture_label(name):
     """Create a short overlay label from RF Bridge capture filenames."""
     stem = os.path.splitext(os.path.basename(name or "Capture"))[0]
     match = re.match(
-        r"^(\d{4}-\d{2}-\d{2})_(morning|afternoon|evening|overnight)_(\d{2})-(\d{2})_(.+)$",
+        r"^(\d{4}-\d{2}-\d{2})_(Morning|Afternoon|Evening|Overnight|morning|afternoon|evening|overnight)_(\d{2})-(\d{2})(AM|PM)?_(.+)$",
         stem,
     )
     if match:
-        date_part, daypart, hour, minute, remainder = match.groups()
+        date_part, daypart, hour, minute, ampm, remainder = match.groups()
         remainder_parts = [part for part in remainder.split("_") if part]
         device = remainder_parts[-1] if remainder_parts else ""
         session = " ".join(remainder_parts[:-1]).strip()
-        label = f"{daypart.title()} {hour}:{minute}"
+        label = f"{daypart.title()} {hour}:{minute}{ampm or ''}"
         if session:
             label += f" · {session[:18]}"
         if device:
@@ -301,6 +302,7 @@ class RFBridgeWindow:
         self.auto_trace_enabled = self.settings.get_bool("auto_trace_enabled", False)
         self.auto_trace_minutes = max(1.0, self.settings.get_float("auto_trace_minutes", 10.0))
         self.appearance = self.settings.get_appearance()
+        self.filename_time_format = self.settings.get_filename_time_format()
         self.theme_name = self.resolve_theme_name(self.appearance)
         self.theme = THEMES[self.theme_name]
         self.ui_bridge = UiBridgeFactory.create()
@@ -1234,6 +1236,7 @@ class RFBridgeWindow:
             "storage_root": self.settings.get_storage_root(),
             "refresh_seconds": self.refresh_seconds,
             "appearance": self.appearance,
+            "filename_time_format": self.filename_time_format,
             "markers": self.mic_markers,
             "capture_overlays": [capture.get("path") for capture in self.capture_overlays if capture.get("path")],
         }
@@ -1280,6 +1283,8 @@ class RFBridgeWindow:
         self.set_refresh_interval(float(profile.get("refresh_seconds", self.refresh_seconds)))
         self.appearance = str(profile.get("appearance", self.appearance))
         self.settings.set_appearance(self.appearance)
+        self.filename_time_format = str(profile.get("filename_time_format", self.filename_time_format))
+        self.settings.set_filename_time_format(self.filename_time_format)
         self.apply_theme()
         self.clear_capture_overlays()
         for capture_path in profile.get("capture_overlays", []):
@@ -1701,6 +1706,13 @@ class RFBridgeWindow:
             refresh_combo.setCurrentIndex(refresh_index)
 
         storage_edit = QLineEdit(self.settings.get_storage_root())
+
+        filename_time_combo = QComboBox()
+        for label, value in FILENAME_TIME_FORMATS:
+            filename_time_combo.addItem(label, value)
+        filename_time_index = filename_time_combo.findData(self.filename_time_format)
+        if filename_time_index >= 0:
+            filename_time_combo.setCurrentIndex(filename_time_index)
         browse_button = QPushButton("Browse…")
         storage_row = QHBoxLayout()
         storage_row.addWidget(storage_edit, stretch=1)
@@ -1729,11 +1741,12 @@ class RFBridgeWindow:
         form.addRow("Appearance", appearance_combo)
         form.addRow("Default refresh", refresh_combo)
         form.addRow("Default storage", storage_row)
+        form.addRow("Capture filename time", filename_time_combo)
         form.addRow("Auto trace overlays", auto_trace_checkbox)
         form.addRow("Auto trace interval", auto_trace_minutes)
 
         note = QLabel(
-            "Storage changes apply to new app sessions. Auto trace overlays use the live scan in memory and do not create extra CSV files."
+            "Storage changes apply to new app sessions. Capture filenames use YYYY-MM-DD_Daypart_Time_session_device.csv. Auto trace overlays use the live scan in memory and do not create extra CSV files."
         )
         note.setWordWrap(True)
 
@@ -1752,6 +1765,8 @@ class RFBridgeWindow:
         self.appearance = appearance_combo.currentText()
         self.settings.set_appearance(self.appearance)
         self.settings.set_storage_root(storage_edit.text().strip() or self.settings.default_storage_root())
+        self.filename_time_format = str(filename_time_combo.currentData() or "12h")
+        self.settings.set_filename_time_format(self.filename_time_format)
         self.auto_trace_enabled = auto_trace_checkbox.isChecked()
         self.auto_trace_minutes = float(auto_trace_minutes.value())
         self.settings.set("auto_trace_enabled", self.auto_trace_enabled)
@@ -1761,6 +1776,7 @@ class RFBridgeWindow:
         self.log(
             f"Preferences saved: appearance={self.appearance}, "
             f"storage={self.settings.get_storage_root()}, "
+            f"filename_time={self.filename_time_format}, "
             f"auto_trace={'on' if self.auto_trace_enabled else 'off'}"
         )
 
@@ -2260,6 +2276,7 @@ class RFBridgeWindow:
                 live_freqs,
                 dbm,
                 self.device_name,
+                self.filename_time_format,
             )
             self.last_save_time = now
             self.log(f"Saved scan: {os.path.basename(filename)}")

@@ -1,11 +1,11 @@
 # Changelog
 
-## v1.9.6.4
+## v1.9.6.6
 
-- Updated CSV capture filenames to `YYYY-MM-DD_daypart_HH-MM_session_device.csv` for clearer morning, afternoon, evening, and overnight sweep browsing.
-- Reworked the capture overlay panel into a compact two-column checklist that displays up to 10 overlays cleanly.
-- Shortened overlay labels to emphasize daypart and capture time while preserving full filenames in tooltips and the Overlays menu.
-- Updated version metadata for v1.9.6.4.
+- Updated CSV capture filenames to use capitalized dayparts and default 12-hour time: `YYYY-MM-DD_Daypart_hh-mmAM_session_device.csv`.
+- Added a Preferences option for capture filename time format: 12-hour time or 24-hour time.
+- Kept compact capture overlay labels aligned with the new filename style, such as `Evening 09:15PM`.
+- Updated README examples and version metadata for v1.9.6.6.
 
 ## v1.9.6.3
 - Renamed timestamped CSV captures from `session_tinysa_scan_timestamp.csv` to `timestamp_session_device.csv` so scan time is visible first in Finder.
