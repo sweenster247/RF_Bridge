@@ -230,6 +230,7 @@ class RFBridgeWindow:
         self.output_dir = output_dir
         self.gig_slug = gig_slug
         self.selected_port = selected_port
+        self.device_name = "tinySA"
         self.debug_serial = debug_serial
         self.freqs_mhz = []
         self.latest_dbm = []
@@ -1928,6 +1929,7 @@ class RFBridgeWindow:
         self.scan_error_count = 0
         self.connected = True
         self.selected_port = port
+        self.device_name = version or "tinySA"
         self.freqs_mhz = freqs_mhz
         self.live_freqs_mhz = freqs_mhz.copy()
         self.latest_dbm = []
@@ -2023,7 +2025,7 @@ class RFBridgeWindow:
         status_text = text or ("Connected" if connected else "Disconnected")
         self.connection_status.setText(status_text)
         self.sidebar_connection_label.setText(status_text)
-        device_name = "Demo Mode" if self.demo_mode else ("tinySA" if connected else "—")
+        device_name = "Demo Mode" if self.demo_mode else (self.device_name if connected else "—")
         self.sidebar_device_label.setText(f"Device: {device_name}")
         show_disconnect = (connected or self.worker is not None) and not self.force_disconnected_actions
         self.connect_button.setVisible(not show_disconnect)
@@ -2223,7 +2225,13 @@ class RFBridgeWindow:
             elif now - self.last_auto_trace_time >= self.auto_trace_minutes * 60:
                 self.add_auto_trace_overlay(live_freqs, dbm, now=now)
         if now - self.last_save_time >= SCAN_INTERVAL_SECONDS:
-            filename, latest_filename = save_wwb_csv(self.output_dir, self.gig_slug, live_freqs, dbm)
+            filename, latest_filename = save_wwb_csv(
+                self.output_dir,
+                self.gig_slug,
+                live_freqs,
+                dbm,
+                self.device_name,
+            )
             self.last_save_time = now
             self.log(f"Saved scan: {os.path.basename(filename)}")
         self.update_status(now)

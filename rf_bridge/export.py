@@ -4,13 +4,16 @@ import csv
 import os
 from datetime import datetime
 
+from .utils import safe_name
 
-def save_wwb_csv(output_dir, gig_slug, freqs_mhz, dbm):
+
+def save_wwb_csv(output_dir, gig_slug, freqs_mhz, dbm, device_name="tinySA"):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    device_slug = safe_name(device_name or "tinySA")
 
     filename = os.path.join(
         output_dir,
-        f"{gig_slug}_tinysa_scan_{timestamp}.csv"
+        f"{timestamp}_{gig_slug}_{device_slug}.csv"
     )
 
     latest_filename = os.path.join(

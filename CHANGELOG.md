@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.9.6.3
+- Renamed timestamped CSV captures from `session_tinysa_scan_timestamp.csv` to `timestamp_session_device.csv` so scan time is visible first in Finder.
+- Added device labeling to saved CSV filenames while keeping `latest_scan.csv` unchanged for Wireless Workbench workflows.
+- Updated version metadata for v1.9.6.3.
+
 ## v1.9.6.2
 - Locked graph panning and scroll zooming within the active frequency range while preserving in-range zoom.
 - Added double-click and right-click reset actions for the full frequency range view.
