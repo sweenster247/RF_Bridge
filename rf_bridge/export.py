@@ -28,14 +28,14 @@ def capture_time_stamp(captured_at, time_format="12-hour"):
 
 def save_wwb_csv(output_dir, gig_slug, freqs_mhz, dbm, device_name="tinySA", time_format="12-hour"):
     captured_at = datetime.now()
-    date_stamp = captured_at.strftime("%Y-%m-%d")
+    month_day_stamp = captured_at.strftime("%m-%d")
     time_stamp = capture_time_stamp(captured_at, time_format)
     daypart = capture_daypart(captured_at)
     device_slug = safe_name(device_name or "tinySA")
 
     filename = os.path.join(
         output_dir,
-        f"{date_stamp}_{daypart}_{time_stamp}_{gig_slug}_{device_slug}.csv"
+        f"{daypart}_{time_stamp}_{month_day_stamp}_{gig_slug}_{device_slug}.csv"
     )
 
     latest_filename = os.path.join(

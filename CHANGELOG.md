@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.9.6.8
+
+- Grouped Capture Overlays into Morning, Afternoon, and Evening sections for cleaner show-day comparison.
+- Each daypart section now displays the latest four captures first while keeping older overlays available from the Overlays menu.
+- Updated Auto Trace overlays to use the same daypart grouping and retain the latest four auto traces per section.
+- Updated CSV capture filenames to `Daypart_hh-mmAM_MM-DD_session_device.csv` for faster RF workflow scanning in Finder.
+- Updated overlay labels to show daypart, 12-hour time, and month/day.
+
 ## v1.9.6.7
 
 - Added graceful tinySA recovery when the device stops responding during live scanning.
