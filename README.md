@@ -22,17 +22,19 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.6.1
+## What’s New in v1.9.6.2
 
-- Added right-click marker controls directly on Mic Plot label boxes.
-- Improved Mic Plot label staggering for close frequencies.
-- Shifted Mic Plot labels higher in the RF graph.
-- Updated Gatekeeper notes for first launch on unsigned macOS builds.
+- Locked graph panning and scroll zooming within the active frequency range.
+- Added double-click and right-click reset actions for the full frequency range view.
+- Kept Mic Plot label boxes inside the visible graph area while zooming or panning.
+- Refined the device connection panel with a quieter compact disconnect control.
+- Made startup faster by leaving Demo Mode immediately available instead of probing tinySA automatically.
 
 ## Features
 
 ### Live RF Visualization
 - Real-time RF graphing
+- Bounded zoom and pan within the current frequency range
 - Adjustable refresh intervals
 - Peak hold modes
 - Freeze Trace mode
@@ -133,8 +135,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.6.1-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.6.1-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.6.2-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.6.2-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

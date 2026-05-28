@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.9.6.2
+- Locked graph panning and scroll zooming within the active frequency range while preserving in-range zoom.
+- Added double-click and right-click reset actions for the full frequency range view.
+- Kept Mic Plot label boxes inside the visible graph area while zooming or panning.
+- Refined the device connection panel with a quieter compact disconnect control.
+- Stopped startup from probing tinySA serial ports automatically so Demo Mode is available immediately.
+
 ## v1.9.6.1
 - Added right-click marker controls directly on Mic Plot label boxes.
 - Improved Mic Plot label staggering so close labels are separated based on the visible scan width.

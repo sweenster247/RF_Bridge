@@ -123,6 +123,66 @@ class UiBridgeFactory:
         return UiBridge()
 
 
+class BoundedFrequencyViewBoxFactory:
+    """Create a pyqtgraph ViewBox that keeps horizontal navigation in range."""
+
+    @staticmethod
+    def create(pg, qt, reset_callback, context_callback):
+        class BoundedFrequencyViewBox(pg.ViewBox):
+            def __init__(self):
+                super().__init__()
+                self.frequency_bounds = None
+
+            def set_frequency_bounds(self, bounds):
+                self.frequency_bounds = bounds
+                self.clamp_x_range()
+
+            def clamp_x_range(self):
+                if not self.frequency_bounds:
+                    return
+
+                low, high = self.frequency_bounds
+                if high <= low:
+                    return
+
+                view_range = self.viewRange()[0]
+                current_low, current_high = view_range
+                width = current_high - current_low
+                max_width = high - low
+
+                if width >= max_width:
+                    target = (low, high)
+                elif current_low < low:
+                    target = (low, low + width)
+                elif current_high > high:
+                    target = (high - width, high)
+                else:
+                    return
+
+                self.setXRange(target[0], target[1], padding=0)
+
+            def wheelEvent(self, event, axis=None):
+                super().wheelEvent(event, axis=axis)
+                self.clamp_x_range()
+
+            def mouseDragEvent(self, event, axis=None):
+                super().mouseDragEvent(event, axis=axis)
+                self.clamp_x_range()
+
+            def mouseDoubleClickEvent(self, event):
+                if event.button() == qt.LeftButton:
+                    event.accept()
+                    reset_callback()
+                    return
+                super().mouseDoubleClickEvent(event)
+
+            def raiseContextMenu(self, event):
+                event.accept()
+                context_callback(event)
+
+        return BoundedFrequencyViewBox()
+
+
 def format_seconds(seconds):
     if float(seconds).is_integer():
         return str(int(seconds))
@@ -183,6 +243,7 @@ class RFBridgeWindow:
         self.top_markers = []
         self.mic_markers = []
         self.mic_marker_items = []
+        self.mic_marker_label_items = []
         self.frozen = False
         self.loaded_capture = None
         self.capture_mode = False
@@ -341,9 +402,11 @@ class RFBridgeWindow:
         self.connection_status.setMinimumWidth(0)
         self.connection_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.port_combo = QComboBox()
-        self.refresh_ports_button = QPushButton("Refresh Ports")
+        self.refresh_ports_button = QPushButton("Refresh")
         self.connect_button = QPushButton("Connect")
         self.disconnect_button = QPushButton("Disconnect")
+        self.disconnect_button.setObjectName("secondaryButton")
+        self.disconnect_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.disconnect_button.setEnabled(False)
         self.disconnect_button.setVisible(False)
         self.device_info_label = QLabel("Device: —\nRange: —")
@@ -359,21 +422,20 @@ class RFBridgeWindow:
         self.device_notice_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.device_notice_label.setVisible(False)
 
-        self.port_combo.setMinimumWidth(220)
+        self.port_combo.setMinimumWidth(205)
         self.port_combo.setMaximumWidth(310)
         self.port_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.port_combo.view().setTextElideMode(self.Qt.ElideMiddle)
-        self.refresh_ports_button.setText("Refresh")
         for _btn in (self.refresh_ports_button, self.connect_button, self.disconnect_button):
-            _btn.setMinimumHeight(26)
-            _btn.setMaximumHeight(30)
+            _btn.setMinimumHeight(24)
+            _btn.setMaximumHeight(28)
         self.disconnect_button.setEnabled(False)
 
         connection_layout.addWidget(self.status_dot, 0, 0)
-        connection_layout.addWidget(self.connection_status, 0, 1, 1, 3)
+        connection_layout.addWidget(self.connection_status, 0, 1, 1, 2)
+        connection_layout.addWidget(self.disconnect_button, 0, 3, 1, 1)
         connection_layout.addWidget(self.port_combo, 1, 0, 1, 4)
         connection_layout.addWidget(self.connect_button, 2, 0, 1, 2)
-        connection_layout.addWidget(self.disconnect_button, 2, 0, 1, 4)
         connection_layout.addWidget(self.refresh_ports_button, 2, 2, 1, 2)
         connection_layout.addWidget(self.device_info_label, 3, 0, 1, 4)
         connection_layout.addWidget(self.device_notice_label, 4, 0, 1, 4)
@@ -440,7 +502,13 @@ class RFBridgeWindow:
         content_layout.setSpacing(8)
 
         pg.setConfigOptions(antialias=True)
-        self.plot = pg.PlotWidget()
+        self.frequency_view_box = BoundedFrequencyViewBoxFactory.create(
+            pg,
+            self.Qt,
+            self.reset_frequency_view,
+            self.show_plot_context_menu,
+        )
+        self.plot = pg.PlotWidget(viewBox=self.frequency_view_box)
         self.plot.setBackground(self.theme["plot_bg"])
         self.plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.plot.showGrid(x=True, y=True, alpha=0.25)
@@ -581,6 +649,7 @@ class RFBridgeWindow:
         self.about_nav_button.clicked.connect(self.open_about)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_move)
         self.plot.scene().sigMouseClicked.connect(self.on_plot_mouse_click)
+        self.plot.getViewBox().sigRangeChanged.connect(self.update_mic_marker_label_view_positions)
         self.window.destroyed.connect(self.shutdown)
 
         self.populate_ports()
@@ -590,13 +659,12 @@ class RFBridgeWindow:
         self.render_mic_markers()
         self.log(f"RF Bridge v{__version__} ready")
 
-        # Defer connection until after the window is shown and the Qt event loop
-        # is running. In a packaged macOS app, doing serial auto-detection during
-        # window construction can make the app appear to launch and then vanish.
         if selected_port:
+            # Defer explicit manual-port connection until after the window is
+            # shown and the Qt event loop is running.
             self.QTimer.singleShot(900, self.connect_device)
         else:
-            self.QTimer.singleShot(900, self.try_auto_connect)
+            self.log("Demo Mode is ready. Select a tinySA port and Connect when needed.")
 
     def resolve_theme_name(self, appearance):
         if appearance == "Light":
@@ -629,7 +697,7 @@ class RFBridgeWindow:
     def stylesheet(self):
         t = self.theme
         return f"""
-        QMainWindow, QWidget {{ background: {t['window_bg']}; color: {t['text']}; font-family: Arial, Helvetica, sans-serif; }}
+        QMainWindow, QWidget {{ background: {t['window_bg']}; color: {t['text']}; font-family: Arial, Helvetica; }}
         QMenuBar, QMenu {{ background: {t['panel_bg']}; color: {t['text']}; border: 1px solid {t['border']}; }}
         QMenuBar::item:selected, QMenu::item:selected {{ background: {t['button_hover']}; }}
         QFrame#connectionPanel, QFrame#overlayPanel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 10px; }}
@@ -658,6 +726,7 @@ class RFBridgeWindow:
         QPushButton#sidebarButton:disabled {{ color: {t['connected']}; background: {t['hover_bg']}; }}
         QTextEdit#logBox {{ background: {t['log_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding: 6px; }}
         QPushButton, QComboBox, QLineEdit {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
+        QPushButton#secondaryButton {{ color: {t['muted_text']}; font-size: 12px; min-width: 84px; max-width: 112px; padding: 1px 8px; }}
         QPushButton:hover, QComboBox:hover {{ background: {t['button_hover']}; }}
         QPushButton:pressed {{ background: {t['button_pressed']}; }}
         QPushButton:disabled {{ color: {t['button_disabled_text']}; background: {t['button_disabled_bg']}; }}
@@ -695,6 +764,51 @@ class RFBridgeWindow:
 
         if not preserve_x and self.freqs_mhz:
             self.plot.setXRange(min(self.freqs_mhz), max(self.freqs_mhz), padding=0)
+
+        self.update_frequency_bounds()
+
+    def update_frequency_bounds(self, freqs_mhz=None):
+        if freqs_mhz is None:
+            freqs_mhz = self.freqs_mhz
+        if not hasattr(self, "frequency_view_box"):
+            return
+        if freqs_mhz:
+            self.frequency_view_box.set_frequency_bounds((min(freqs_mhz), max(freqs_mhz)))
+        else:
+            self.frequency_view_box.set_frequency_bounds(None)
+
+    def reset_frequency_view(self):
+        freqs_mhz = self.freqs_mhz or self.live_freqs_mhz
+        if not freqs_mhz:
+            return
+        self.plot.setXRange(min(freqs_mhz), max(freqs_mhz), padding=0)
+        self.lock_plot_axes(preserve_x=True)
+        self.log("Frequency view reset")
+
+    def show_plot_context_menu(self, event):
+        from PySide6.QtGui import QCursor
+
+        scene_pos = event.scenePos()
+        freq = self.plot_frequency_from_scene_pos(scene_pos)
+        menu = self.QMenu(self.window)
+
+        if freq is not None:
+            marker_index, marker = self.nearest_mic_marker(freq)
+            if marker is not None:
+                remove_action = menu.addAction(f"Remove Marker: {marker['name']}")
+                remove_action.triggered.connect(
+                    lambda _checked=False, index=marker_index: self.remove_mic_marker(index)
+                )
+                menu.addSeparator()
+
+            add_action = menu.addAction(f"Add Mic Marker at {freq:.3f} MHz...")
+            add_action.triggered.connect(
+                lambda _checked=False, marker_freq=freq: self.prompt_add_mic_marker(marker_freq)
+            )
+
+        reset_action = menu.addAction("Reset Frequency Range")
+        reset_action.triggered.connect(self.reset_frequency_view)
+        menu.exec(QCursor.pos())
 
     def create_menus(self):
         file_menu = self.window.menuBar().addMenu("File")
@@ -1328,14 +1442,8 @@ class RFBridgeWindow:
     def on_plot_mouse_click(self, event):
         if event.button() != self.Qt.RightButton:
             return
-
-        freq = self.plot_frequency_from_scene_pos(event.scenePos())
-        if freq is None:
-            return
-
         event.accept()
-        marker_index, marker = self.nearest_mic_marker(freq)
-        self.show_mic_marker_context_menu(freq, marker_index, marker)
+        self.show_plot_context_menu(event)
 
     def show_mic_marker_context_menu(self, freq_mhz, marker_index=None, marker=None):
         from PySide6.QtGui import QCursor
@@ -1445,6 +1553,28 @@ class RFBridgeWindow:
 
         return placements
 
+    def clamped_mic_marker_label_x(self, freq):
+        if not getattr(self, "plot", None):
+            return freq
+
+        view_low, view_high = self.plot.getViewBox().viewRange()[0]
+        if view_high <= view_low:
+            return freq
+
+        width = view_high - view_low
+        margin = min(width * 0.04, width / 3)
+        return max(view_low + margin, min(view_high - margin, freq))
+
+    def update_mic_marker_label_view_positions(self, *args):
+        for item in getattr(self, "mic_marker_label_items", []):
+            label = item.get("label")
+            if label is None:
+                continue
+            label.setPos(
+                self.clamped_mic_marker_label_x(item["freq"]),
+                item["y"],
+            )
+
     def render_mic_markers(self):
         for item in self.mic_marker_items:
             try:
@@ -1452,6 +1582,7 @@ class RFBridgeWindow:
             except Exception:
                 pass
         self.mic_marker_items = []
+        self.mic_marker_label_items = []
 
         if not getattr(self, "plot", None):
             return
@@ -1485,7 +1616,8 @@ class RFBridgeWindow:
             # Place mic plot labels slightly below the top of the graph so
             # labels remain visible instead of clipping against the title area.
             # Nearby markers use staggered lanes so labels stay readable.
-            label.setPos(freq, label_positions.get(index, MIC_MARKER_LABEL_LANES[0]))
+            label_y = label_positions.get(index, MIC_MARKER_LABEL_LANES[0])
+            label.setPos(self.clamped_mic_marker_label_x(freq), label_y)
             label.setZValue(20)
             label.setAcceptedMouseButtons(self.Qt.RightButton)
             label.mouseClickEvent = (
@@ -1495,6 +1627,11 @@ class RFBridgeWindow:
             self.plot.addItem(line, ignoreBounds=True)
             self.plot.addItem(label, ignoreBounds=True)
             self.mic_marker_items.extend([line, label])
+            self.mic_marker_label_items.append({
+                "label": label,
+                "freq": freq,
+                "y": label_y,
+            })
 
     def open_preferences(self):
         from PySide6.QtWidgets import (
@@ -1709,7 +1846,7 @@ class RFBridgeWindow:
         self.device_info_label.setText("Device: Demo Mode\nRange: 470.000–560.000 MHz")
         self.show_device_notice("Demo Mode is visual only. No CSV files are written.")
         self.update_connection_state(True, "Demo Mode")
-        self.disconnect_button.setText("Disconnect Demo")
+        self.disconnect_button.setText("Disconnect")
         self.log("Demo Mode started; CSV export disabled")
 
         self.demo_timer = self.QTimer(self.window)
@@ -1901,6 +2038,7 @@ class RFBridgeWindow:
             self.disconnect_button.setText("Disconnect")
             if self.worker is None and not self.demo_mode:
                 self.update_frequency_range_labels([])
+                self.update_frequency_bounds([])
         self.update_status()
 
     def update_frequency_range_labels(self, freqs_mhz=None):
