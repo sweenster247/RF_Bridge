@@ -22,12 +22,16 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.6.9
+## What’s New in v1.9.7.1
 
-- Marker labels now support right-click editing directly from the plot.
-- Choosing **Edit Marker** opens a focused rename dialog with the selected mic marker pre-filled.
-- Marker frequency, color, and visibility are preserved when renaming.
-- Capture overlay grouping and daypart-based CSV naming remain included from v1.9.6.8.
+- Graceful tinySA recovery if the device stops responding during a session.
+- RF Bridge now attempts one automatic reconnect without closing the app.
+- If reconnect fails, the UI recommends power-cycling/restarting the tinySA and restarting RF Bridge.
+- CSV capture filenames now use `YYYY-MM-DD_Daypart_hh-mmAM_session_device.csv` by default for easier show-day browsing, with a 24-hour filename option in Preferences.
+- Capture overlays now use a compact two-column checklist that stays readable with 5–10 loaded sweeps.
+- Overlay labels now emphasize Daypart and time, with full filenames still available in tooltips and the Overlays menu.
+- Mic markers can now be dragged directly on the RF graph to adjust their frequency.
+- Mic marker text boxes now drag along with their marker lines, so either the line or label can be used to reposition a marker.
 
 ## Features
 
@@ -49,7 +53,7 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 - Continuous WWB-compatible CSV export
 - Automatic `latest_scan.csv` updating
 - Timestamped scan history
-- Show-day capture names with readable dayparts, for example `Evening_09-15PM_05-27_blue_fest_tinysa4.csv`
+- Show-day capture names with readable dayparts, for example `2026-05-27_Evening_09-15PM_blue_fest_tinysa4.csv`
 - Optional 24-hour capture filename time format in Preferences
 
 ### Capture Loading and Overlays
@@ -61,6 +65,7 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 ### Markers / Mic Plot
 - Add named frequency markers
 - Add and remove markers directly from the RF graph right-click menu
+- Drag marker lines directly on the graph to fine-tune frequencies
 - Persistent marker storage
 - Expanded color-coded vertical marker lines
 - Staggered labels displayed directly on the RF graph
@@ -136,8 +141,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.6.9-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.6.9-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.7.1-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.7.1-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

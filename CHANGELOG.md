@@ -1,27 +1,19 @@
 # Changelog
 
-## v1.9.6.9
+## v1.9.7.1
 
-- Added right-click Edit Marker action for mic markers.
-- Marker edit opens a focused rename dialog with the selected marker prefilled.
-- Existing marker frequency, color, and visibility are preserved when renaming.
-- Capture overlay organization and 1.9.6.8 filename workflow remain unchanged.
+- Mic marker text boxes can now be dragged directly to reposition the associated marker.
+- Dragging either the marker line or its label updates the displayed frequency and saves the marker position.
+- Updated app version metadata, macOS bundle info, README, and release paths for v1.9.7.1.
 
-## v1.9.6.8
-
-- Grouped Capture Overlays into Morning, Afternoon, and Evening sections for cleaner show-day comparison.
-- Each daypart section now displays the latest four captures first while keeping older overlays available from the Overlays menu.
-- Updated Auto Trace overlays to use the same daypart grouping and retain the latest four auto traces per section.
-- Updated CSV capture filenames to `Daypart_hh-mmAM_MM-DD_session_device.csv` for faster RF workflow scanning in Finder.
-- Updated overlay labels to show daypart, 12-hour time, and month/day.
-
-## v1.9.6.7
+## v1.9.7
 
 - Added graceful tinySA recovery when the device stops responding during live scanning.
 - RF Bridge now attempts one automatic reconnect without closing the app.
 - If reconnect fails, the UI recommends power-cycling/restarting the tinySA and restarting RF Bridge.
 - Added clearer reconnect status and device notice messaging.
 - Aligned app version metadata across Python package metadata, macOS bundle info, app About dialog, build scripts, README, and release output paths.
+- Added draggable Mic Plot markers so marker frequencies can be adjusted directly from the RF graph.
 
 ## v1.9.6.6
 

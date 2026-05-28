@@ -10,12 +10,11 @@ import random
 import re
 import time
 import webbrowser
-from datetime import datetime
 
 from .capture import load_capture_csv
 from .micplot import MARKER_COLORS, DEFAULT_MARKER_COLOR, load_markers, save_markers
 from .config import SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS
-from .export import capture_daypart, save_wwb_csv
+from .export import save_wwb_csv
 from .settings import AppSettings
 from .tinysa import candidate_serial_ports, describe_port, find_tinysa_port
 from .utils import time_12h
@@ -25,9 +24,7 @@ from .version import __version__
 
 REFRESH_MODES = [0.5, 1, 2, 5, 10]
 MAX_CONSECUTIVE_SCAN_MISMATCHES = 3
-MAX_AUTO_TRACE_OVERLAYS = 12
-MAX_OVERLAYS_PER_DAYPART_SECTION = 4
-OVERLAY_DAYPART_SECTIONS = ("Morning", "Afternoon", "Evening")
+MAX_AUTO_TRACE_OVERLAYS = 6
 FREQUENCY_DISPLAY_STEP_MHZ = 0.005
 DEVICE_UNAVAILABLE_MARKERS = (
     "device not configured",
@@ -200,81 +197,31 @@ def snap_display_frequency(freq_mhz):
     return round(freq_mhz / FREQUENCY_DISPLAY_STEP_MHZ) * FREQUENCY_DISPLAY_STEP_MHZ
 
 
-def normalize_overlay_daypart(daypart):
-    """Map capture dayparts into the three show-day overlay sections."""
-    daypart = (daypart or "").title()
-    if daypart == "Overnight":
-        return "Evening"
-    if daypart in OVERLAY_DAYPART_SECTIONS:
-        return daypart
-    return "Evening"
-
-
-def overlay_sort_tuple(year, month, day, hour, minute, ampm=None):
-    """Return a sortable tuple where larger values are newer captures."""
-    hour_value = int(hour)
-    if ampm:
-        ampm = ampm.upper()
-        if ampm == "PM" and hour_value != 12:
-            hour_value += 12
-        elif ampm == "AM" and hour_value == 12:
-            hour_value = 0
-    return (int(year), int(month), int(day), hour_value, int(minute))
-
-
-def overlay_capture_metadata(capture):
-    """Return daypart, label, and sortable timestamp metadata for an overlay."""
-    name = capture.get("name") if isinstance(capture, dict) else str(capture)
-    stem = os.path.splitext(os.path.basename(name or "Capture"))[0]
-
-    # Current format: Evening_09-15PM_05-27_session_device.csv
-    match = re.match(
-        r"^(Morning|Afternoon|Evening|Overnight|morning|afternoon|evening|overnight)_(\d{1,2})-(\d{2})(AM|PM)?_(\d{2})-(\d{2})(?:_(.+))?$",
-        stem,
-    )
-    if match:
-        daypart, hour, minute, ampm, month, day, remainder = match.groups()
-        section = normalize_overlay_daypart(daypart)
-        label_time = f"{int(hour)}:{minute}{ampm or ''}"
-        short_label = f"{section} {label_time} · {month}/{day}"
-        sort_key = overlay_sort_tuple(9999, month, day, hour, minute, ampm)
-        return section, short_label, sort_key
-
-    # Previous format: 2026-05-27_Evening_09-15PM_session_device.csv
-    match = re.match(
-        r"^(\d{4})-(\d{2})-(\d{2})_(Morning|Afternoon|Evening|Overnight|morning|afternoon|evening|overnight)_(\d{1,2})-(\d{2})(AM|PM)?_(.+)$",
-        stem,
-    )
-    if match:
-        year, month, day, daypart, hour, minute, ampm, _remainder = match.groups()
-        section = normalize_overlay_daypart(daypart)
-        label_time = f"{int(hour)}:{minute}{ampm or ''}"
-        short_label = f"{section} {label_time} · {month}/{day}"
-        sort_key = overlay_sort_tuple(year, month, day, hour, minute, ampm)
-        return section, short_label, sort_key
-
-    if isinstance(capture, dict) and capture.get("captured_at"):
-        captured_at = capture["captured_at"]
-        section = normalize_overlay_daypart(capture.get("daypart"))
-        return section, capture.get("short_label", stem), (captured_at.year, captured_at.month, captured_at.day, captured_at.hour, captured_at.minute)
-
-    return "Evening", stem[:32] + ("…" if len(stem) > 32 else ""), (0, 0, 0, 0, 0)
-
-
 def compact_capture_label(name):
     """Create a short overlay label from RF Bridge capture filenames."""
-    _section, label, _sort_key = overlay_capture_metadata({"name": name})
-    return label
+    stem = os.path.splitext(os.path.basename(name or "Capture"))[0]
+    match = re.match(
+        r"^(\d{4}-\d{2}-\d{2})_(Morning|Afternoon|Evening|Overnight|morning|afternoon|evening|overnight)_(\d{2})-(\d{2})(AM|PM)?_(.+)$",
+        stem,
+    )
+    if match:
+        date_part, daypart, hour, minute, ampm, remainder = match.groups()
+        remainder_parts = [part for part in remainder.split("_") if part]
+        device = remainder_parts[-1] if remainder_parts else ""
+        session = " ".join(remainder_parts[:-1]).strip()
+        label = f"{daypart.title()} {hour}:{minute}{ampm or ''}"
+        if session:
+            label += f" · {session[:18]}"
+        if device:
+            label += f" · {device}"
+        return label
 
-def grouped_overlay_entries(overlays):
-    """Group overlays by show-day section, newest first within each section."""
-    grouped = {section: [] for section in OVERLAY_DAYPART_SECTIONS}
-    for index, capture in enumerate(overlays):
-        section, label, sort_key = overlay_capture_metadata(capture)
-        grouped.setdefault(section, []).append((sort_key, index, capture, label))
-    for section in grouped:
-        grouped[section].sort(key=lambda item: item[0], reverse=True)
-    return grouped
+    legacy_match = re.match(r"^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})(?:-\d{2})?_(.+)$", stem)
+    if legacy_match:
+        _date_part, hour, minute, remainder = legacy_match.groups()
+        return f"{hour}:{minute} · {remainder[:26]}"
+
+    return stem[:42] + ("…" if len(stem) > 42 else "")
 
 
 class RFBridgeWindow:
@@ -532,7 +479,7 @@ class RFBridgeWindow:
 
         self.overlay_panel = QFrame()
         self.overlay_panel.setObjectName("overlayPanel")
-        self.overlay_panel.setFixedHeight(220)
+        self.overlay_panel.setFixedHeight(195)
         overlay_layout = QVBoxLayout(self.overlay_panel)
         overlay_layout.setContentsMargins(14, 10, 14, 10)
         overlay_layout.setSpacing(8)
@@ -563,7 +510,7 @@ class RFBridgeWindow:
         overlay_content_layout.setSpacing(4)
         self.overlay_controls_row = QGridLayout()
         self.overlay_controls_row.setHorizontalSpacing(10)
-        self.overlay_controls_row.setVerticalSpacing(4)
+        self.overlay_controls_row.setVerticalSpacing(6)
         self.overlay_empty_label = QLabel("No overlays loaded")
         self.overlay_empty_label.setObjectName("overlayEmptyLabel")
         self.overlay_empty_label.setAlignment(self.Qt.AlignCenter)
@@ -802,8 +749,6 @@ class RFBridgeWindow:
         QLabel#overlaySubtitle {{ color: {t['muted_text']}; font-size: 12px; background: transparent; }}
         QLabel#overlayEmptyLabel {{ color: {t['text']}; font-size: 16px; font-weight: bold; background: transparent; padding: 2px; }}
         QLabel#overlayEmptyHint {{ color: {t['muted_text']}; font-size: 12px; background: transparent; padding: 2px; }}
-        QLabel#overlaySectionHeader {{ color: {t['text']}; font-size: 12px; font-weight: bold; background: transparent; padding-bottom: 1px; }}
-        QLabel#overlaySectionEmpty {{ color: {t['muted_text']}; font-size: 11px; background: transparent; padding: 1px; }}
         QLabel#sidebarLogo {{ background: transparent; border: 0px; }}
         QLabel#sidebarTitle {{ font-weight: bold; color: {t['text']}; font-size: 24px; background: transparent; }}
         QLabel#sidebarSubtitle {{ color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; letter-spacing: 0.2px; background: transparent; padding-bottom: 2px; }}
@@ -883,10 +828,6 @@ class RFBridgeWindow:
         if freq is not None:
             marker_index, marker = self.nearest_mic_marker(freq)
             if marker is not None:
-                edit_action = menu.addAction(f"Edit Marker: {marker['name']}...")
-                edit_action.triggered.connect(
-                    lambda _checked=False, index=marker_index: self.prompt_edit_mic_marker(index)
-                )
                 remove_action = menu.addAction(f"Remove Marker: {marker['name']}")
                 remove_action.triggered.connect(
                     lambda _checked=False, index=marker_index: self.remove_mic_marker(index)
@@ -1047,40 +988,29 @@ class RFBridgeWindow:
     def add_auto_trace_overlay(self, freqs_mhz, dbm, now=None):
         if now is None:
             now = time.time()
-        captured_at = datetime.fromtimestamp(now)
-        daypart = capture_daypart(captured_at)
-        section = normalize_overlay_daypart(daypart)
-        time_label = captured_at.strftime("%I:%M%p").lstrip("0")
-        month_day_label = captured_at.strftime("%m/%d")
         capture = {
-            "name": f"{section} {time_label} {month_day_label} Auto Trace",
-            "short_label": f"{section} {time_label} · {month_day_label}",
+            "name": f"Auto Trace {time_12h()}",
             "path": None,
             "freqs_mhz": list(freqs_mhz),
             "dbm": list(dbm),
             "visible": True,
             "color": self.next_overlay_color(),
             "auto_trace": True,
-            "captured_at": captured_at,
-            "daypart": section,
         }
         self.capture_overlays.append(capture)
-
-        auto_overlays = [item for item in self.capture_overlays if item.get("auto_trace")]
-        grouped_auto = {section_name: [] for section_name in OVERLAY_DAYPART_SECTIONS}
-        for item in auto_overlays:
-            item_section, _label, sort_key = overlay_capture_metadata(item)
-            grouped_auto.setdefault(item_section, []).append((sort_key, item))
-
-        remove_items = set()
-        for items in grouped_auto.values():
-            items.sort(key=lambda pair: pair[0], reverse=True)
-            for _sort_key, item in items[MAX_OVERLAYS_PER_DAYPART_SECTION:]:
-                remove_items.add(id(item))
-
-        if remove_items:
-            self.capture_overlays = [item for item in self.capture_overlays if id(item) not in remove_items]
-
+        auto_indexes = [
+            index
+            for index, item in enumerate(self.capture_overlays)
+            if item.get("auto_trace")
+        ]
+        while len(auto_indexes) > MAX_AUTO_TRACE_OVERLAYS:
+            remove_index = auto_indexes.pop(0)
+            self.capture_overlays.pop(remove_index)
+            auto_indexes = [
+                index
+                for index, item in enumerate(self.capture_overlays)
+                if item.get("auto_trace")
+            ]
         self.last_auto_trace_time = now
         self.render_capture_overlays()
         self.rebuild_overlay_menu()
@@ -1168,23 +1098,14 @@ class RFBridgeWindow:
             self.overlay_menu.addAction(empty_action)
             self.rebuild_overlay_panel()
             return
-        grouped = grouped_overlay_entries(self.capture_overlays)
-        for section in OVERLAY_DAYPART_SECTIONS:
-            section_entries = grouped.get(section, [])
-            if not section_entries:
-                continue
-            section_action = self.QAction(section, self.window)
-            section_action.setEnabled(False)
-            self.overlay_menu.addAction(section_action)
-            for _sort_key, index, capture, label in section_entries:
-                action = self.QAction(label, self.window)
-                action.setToolTip(capture.get("name", label))
-                action.setCheckable(True)
-                action.setChecked(bool(capture.get("visible", True)))
-                action.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
-                self.overlay_menu.addAction(action)
-                self.capture_overlay_actions.append((index, action))
-            self.overlay_menu.addSeparator()
+        for index, capture in enumerate(self.capture_overlays):
+            action = self.QAction(capture.get("name", f"Capture {index + 1}"), self.window)
+            action.setCheckable(True)
+            action.setChecked(bool(capture.get("visible", True)))
+            action.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
+            self.overlay_menu.addAction(action)
+            self.capture_overlay_actions.append(action)
+        self.overlay_menu.addSeparator()
         clear_action = self.QAction("Clear Capture Overlays", self.window)
         clear_action.triggered.connect(self.clear_capture_overlays)
         self.overlay_menu.addAction(clear_action)
@@ -1215,34 +1136,24 @@ class RFBridgeWindow:
         if hasattr(self, "overlay_empty_hint"):
             self.overlay_empty_hint.setVisible(False)
 
-        grouped = grouped_overlay_entries(self.capture_overlays)
-        self.overlay_checkbox_widgets = []
-        columns = len(OVERLAY_DAYPART_SECTIONS)
-        for column, section in enumerate(OVERLAY_DAYPART_SECTIONS):
-            header = QLabel(section)
-            header.setObjectName("overlaySectionHeader")
-            self.overlay_controls_row.addWidget(header, 0, column)
+        max_visible_controls = 10
+        columns = 2
+        for index, capture in enumerate(self.capture_overlays[:max_visible_controls]):
+            label = compact_capture_label(capture.get("name", f"Capture {index + 1}"))
+            checkbox = QCheckBox(label)
+            checkbox.setToolTip(capture.get("name", label))
+            checkbox.setChecked(bool(capture.get("visible", True)))
+            checkbox.setStyleSheet(f"color: {capture.get('color', self.theme['text'])};")
+            checkbox.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
+            row = index // columns
+            column = index % columns
+            self.overlay_controls_row.addWidget(checkbox, row, column)
+            self.overlay_checkbox_widgets.append(checkbox)
 
-            entries = grouped.get(section, [])
-            if not entries:
-                empty = QLabel("No captures")
-                empty.setObjectName("overlaySectionEmpty")
-                self.overlay_controls_row.addWidget(empty, 1, column)
-                continue
-
-            for row_offset, (_sort_key, index, capture, label) in enumerate(entries[:MAX_OVERLAYS_PER_DAYPART_SECTION], start=1):
-                checkbox = QCheckBox(label)
-                checkbox.setToolTip(capture.get("name", label))
-                checkbox.setChecked(bool(capture.get("visible", True)))
-                checkbox.setStyleSheet(f"color: {capture.get('color', self.theme['text'])};")
-                checkbox.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
-                self.overlay_controls_row.addWidget(checkbox, row_offset, column)
-                self.overlay_checkbox_widgets.append((index, checkbox))
-
-            if len(entries) > MAX_OVERLAYS_PER_DAYPART_SECTION:
-                more_label = QLabel(f"+{len(entries) - MAX_OVERLAYS_PER_DAYPART_SECTION} more")
-                more_label.setObjectName("overlaySectionEmpty")
-                self.overlay_controls_row.addWidget(more_label, MAX_OVERLAYS_PER_DAYPART_SECTION + 1, column)
+        if len(self.capture_overlays) > max_visible_controls:
+            more_label = QLabel(f"+{len(self.capture_overlays) - max_visible_controls} more in Overlays menu")
+            more_label.setObjectName("overlayEmptyLabel")
+            self.overlay_controls_row.addWidget(more_label, max_visible_controls // columns, 0, 1, columns)
 
         for column in range(columns):
             self.overlay_controls_row.setColumnStretch(column, 1)
@@ -1254,22 +1165,14 @@ class RFBridgeWindow:
         the widget that emitted the signal while Qt is still processing it. On
         macOS that can crash the app. Sync the existing controls instead.
         """
-        for item in getattr(self, "capture_overlay_actions", []):
-            if isinstance(item, tuple):
-                index, action = item
-            else:
-                index, action = self.capture_overlay_actions.index(item), item
+        for index, action in enumerate(getattr(self, "capture_overlay_actions", [])):
             if index >= len(self.capture_overlays):
                 continue
             action.blockSignals(True)
             action.setChecked(bool(self.capture_overlays[index].get("visible", True)))
             action.blockSignals(False)
 
-        for item in getattr(self, "overlay_checkbox_widgets", []):
-            if isinstance(item, tuple):
-                index, checkbox = item
-            else:
-                index, checkbox = self.overlay_checkbox_widgets.index(item), item
+        for index, checkbox in enumerate(getattr(self, "overlay_checkbox_widgets", [])):
             if index >= len(self.capture_overlays):
                 continue
             checkbox.blockSignals(True)
@@ -1582,10 +1485,6 @@ class RFBridgeWindow:
 
         menu = self.QMenu(self.window)
         if marker is not None:
-            edit_action = menu.addAction(f"Edit Marker: {marker['name']}...")
-            edit_action.triggered.connect(
-                lambda _checked=False, index=marker_index: self.prompt_edit_mic_marker(index)
-            )
             remove_action = menu.addAction(f"Remove Marker: {marker['name']}")
             remove_action.triggered.connect(
                 lambda _checked=False, index=marker_index: self.remove_mic_marker(index)
@@ -1642,46 +1541,6 @@ class RFBridgeWindow:
 
         self.render_mic_markers()
         self.log(f"Mic marker added: {name} at {freq_mhz:.3f} MHz")
-
-    def prompt_edit_mic_marker(self, marker_index):
-        from PySide6.QtWidgets import QInputDialog
-
-        if not (0 <= marker_index < len(self.mic_markers)):
-            return
-
-        marker = dict(self.mic_markers[marker_index])
-        current_name = str(marker.get("name", "")).strip()
-        freq_mhz = float(marker.get("frequency_mhz", 0.0))
-
-        name, ok = QInputDialog.getText(
-            self.window,
-            "Edit Mic Marker",
-            f"Marker name for {freq_mhz:.3f} MHz:",
-            text=current_name,
-        )
-        if not ok:
-            return
-
-        name = name.strip()
-        if not name:
-            self.show_error("Marker name is required.")
-            return
-
-        updated_markers = list(self.mic_markers)
-        marker["name"] = name
-        updated_markers[marker_index] = marker
-
-        try:
-            self.mic_markers = save_markers(self.settings, updated_markers)
-        except ValueError as exc:
-            self.show_error(str(exc))
-            return
-
-        self.render_mic_markers()
-        if current_name and current_name != name:
-            self.log(f"Mic marker renamed: {current_name} → {name}")
-        else:
-            self.log(f"Mic marker updated: {name}")
 
     def remove_mic_marker(self, marker_index):
         if not (0 <= marker_index < len(self.mic_markers)):
@@ -1751,6 +1610,46 @@ class RFBridgeWindow:
                 item["y"],
             )
 
+    def on_mic_marker_label_drag(self, event, marker_index):
+        if event.button() != self.Qt.LeftButton:
+            return
+
+        event.accept()
+        if not (0 <= marker_index < len(self.mic_markers)):
+            return
+
+        freq = self.plot_frequency_from_scene_pos(event.scenePos())
+        if freq is None:
+            return
+
+        label_item = None
+        for item in getattr(self, "mic_marker_label_items", []):
+            if item.get("index") == marker_index:
+                label_item = item
+                break
+
+        line = label_item.get("line") if label_item else None
+        if line is not None:
+            line.setValue(freq)
+        else:
+            marker = self.mic_markers[marker_index]
+            marker["frequency_mhz"] = freq
+            self.on_mic_marker_dragged(marker_index, None)
+
+        if event.isFinish():
+            if line is not None:
+                self.finish_mic_marker_drag(marker_index, line)
+            else:
+                marker = dict(self.mic_markers[marker_index])
+                marker["frequency_mhz"] = freq
+                updated = list(self.mic_markers)
+                updated[marker_index] = marker
+                try:
+                    self.mic_markers = save_markers(self.settings, updated)
+                except ValueError as exc:
+                    self.show_error(str(exc))
+                    self.render_mic_markers()
+
     def render_mic_markers(self):
         for item in self.mic_marker_items:
             try:
@@ -1775,13 +1674,23 @@ class RFBridgeWindow:
                 continue
             freq = float(marker["frequency_mhz"])
             color = marker.get("color", DEFAULT_MARKER_COLOR)
+            marker_bounds = None
+            if self.freqs_mhz:
+                marker_bounds = (min(self.freqs_mhz), max(self.freqs_mhz))
             line = self.pg.InfiniteLine(
                 pos=freq,
                 angle=90,
                 pen=self.pg.mkPen(color, width=1.5),
-                movable=False,
+                movable=True,
+                bounds=marker_bounds,
             )
             line.setZValue(5)
+            line.sigPositionChanged.connect(
+                lambda item, marker_index=index: self.on_mic_marker_dragged(marker_index, item)
+            )
+            line.sigPositionChangeFinished.connect(
+                lambda item, marker_index=index: self.finish_mic_marker_drag(marker_index, item)
+            )
             label = self.pg.TextItem(
                 text=f"{marker['name']}\n{freq:.3f} MHz",
                 color=color,
@@ -1795,19 +1704,67 @@ class RFBridgeWindow:
             label_y = label_positions.get(index, MIC_MARKER_LABEL_LANES[0])
             label.setPos(self.clamped_mic_marker_label_x(freq), label_y)
             label.setZValue(20)
-            label.setAcceptedMouseButtons(self.Qt.RightButton)
+            label.setAcceptedMouseButtons(self.Qt.LeftButton | self.Qt.RightButton)
             label.mouseClickEvent = (
                 lambda event, marker_index=index, marker_freq=freq:
                 self.on_mic_marker_label_click(event, marker_index, marker_freq)
+            )
+            label.mouseDragEvent = (
+                lambda event, marker_index=index:
+                self.on_mic_marker_label_drag(event, marker_index)
             )
             self.plot.addItem(line, ignoreBounds=True)
             self.plot.addItem(label, ignoreBounds=True)
             self.mic_marker_items.extend([line, label])
             self.mic_marker_label_items.append({
                 "label": label,
+                "line": line,
                 "freq": freq,
                 "y": label_y,
+                "index": index,
             })
+
+    def marker_drag_frequency(self, line_item):
+        freq = float(line_item.value())
+        if self.freqs_mhz:
+            freq = max(min(self.freqs_mhz), min(max(self.freqs_mhz), freq))
+        return snap_display_frequency(freq)
+
+    def on_mic_marker_dragged(self, marker_index, line_item):
+        if not (0 <= marker_index < len(self.mic_markers)):
+            return
+        if line_item is not None:
+            freq = self.marker_drag_frequency(line_item)
+        else:
+            freq = snap_display_frequency(float(self.mic_markers[marker_index]["frequency_mhz"]))
+        marker = self.mic_markers[marker_index]
+        for item in getattr(self, "mic_marker_label_items", []):
+            if item.get("index") != marker_index:
+                continue
+            item["freq"] = freq
+            label = item["label"]
+            label.setText(f"{marker['name']}\n{freq:.3f} MHz")
+            label.setPos(self.clamped_mic_marker_label_x(freq), item["y"])
+            break
+
+    def finish_mic_marker_drag(self, marker_index, line_item):
+        if not (0 <= marker_index < len(self.mic_markers)):
+            return
+        freq = self.marker_drag_frequency(line_item)
+        marker = dict(self.mic_markers[marker_index])
+        old_freq = float(marker.get("frequency_mhz", freq))
+        marker["frequency_mhz"] = freq
+        updated = list(self.mic_markers)
+        updated[marker_index] = marker
+        try:
+            self.mic_markers = save_markers(self.settings, updated)
+        except ValueError as exc:
+            self.show_error(str(exc))
+            self.render_mic_markers()
+            return
+        self.render_mic_markers()
+        if abs(old_freq - freq) >= FREQUENCY_DISPLAY_STEP_MHZ:
+            self.log(f"Mic marker moved: {marker['name']} {old_freq:.3f} MHz → {freq:.3f} MHz")
 
     def open_preferences(self):
         from PySide6.QtWidgets import (
