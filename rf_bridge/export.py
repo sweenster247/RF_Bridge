@@ -2,18 +2,33 @@
 
 import csv
 import os
-from datetime import datetime
+from datetime import datetime, time
 
 from .utils import safe_name
 
 
+def capture_daypart(captured_at):
+    """Return a readable daypart for show-day RF sweep filenames."""
+    capture_time = captured_at.time()
+    if time(5, 0) <= capture_time < time(12, 0):
+        return "morning"
+    if time(12, 0) <= capture_time < time(17, 0):
+        return "afternoon"
+    if time(17, 0) <= capture_time <= time(23, 59, 59):
+        return "evening"
+    return "overnight"
+
+
 def save_wwb_csv(output_dir, gig_slug, freqs_mhz, dbm, device_name="tinySA"):
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    captured_at = datetime.now()
+    date_stamp = captured_at.strftime("%Y-%m-%d")
+    time_stamp = captured_at.strftime("%H-%M")
+    daypart = capture_daypart(captured_at)
     device_slug = safe_name(device_name or "tinySA")
 
     filename = os.path.join(
         output_dir,
-        f"{timestamp}_{gig_slug}_{device_slug}.csv"
+        f"{date_stamp}_{daypart}_{time_stamp}_{gig_slug}_{device_slug}.csv"
     )
 
     latest_filename = os.path.join(

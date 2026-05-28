@@ -7,6 +7,7 @@ import json
 import math
 import os
 import random
+import re
 import time
 import webbrowser
 
@@ -191,6 +192,33 @@ def format_seconds(seconds):
 
 def snap_display_frequency(freq_mhz):
     return round(freq_mhz / FREQUENCY_DISPLAY_STEP_MHZ) * FREQUENCY_DISPLAY_STEP_MHZ
+
+
+def compact_capture_label(name):
+    """Create a short overlay label from RF Bridge capture filenames."""
+    stem = os.path.splitext(os.path.basename(name or "Capture"))[0]
+    match = re.match(
+        r"^(\d{4}-\d{2}-\d{2})_(morning|afternoon|evening|overnight)_(\d{2})-(\d{2})_(.+)$",
+        stem,
+    )
+    if match:
+        date_part, daypart, hour, minute, remainder = match.groups()
+        remainder_parts = [part for part in remainder.split("_") if part]
+        device = remainder_parts[-1] if remainder_parts else ""
+        session = " ".join(remainder_parts[:-1]).strip()
+        label = f"{daypart.title()} {hour}:{minute}"
+        if session:
+            label += f" · {session[:18]}"
+        if device:
+            label += f" · {device}"
+        return label
+
+    legacy_match = re.match(r"^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})(?:-\d{2})?_(.+)$", stem)
+    if legacy_match:
+        _date_part, hour, minute, remainder = legacy_match.groups()
+        return f"{hour}:{minute} · {remainder[:26]}"
+
+    return stem[:42] + ("…" if len(stem) > 42 else "")
 
 
 class RFBridgeWindow:
@@ -475,17 +503,16 @@ class RFBridgeWindow:
         overlay_content_layout = QVBoxLayout(self.overlay_content_frame)
         overlay_content_layout.setContentsMargins(12, 8, 12, 8)
         overlay_content_layout.setSpacing(4)
-        self.overlay_controls_row = QHBoxLayout()
-        self.overlay_controls_row.setSpacing(10)
+        self.overlay_controls_row = QGridLayout()
+        self.overlay_controls_row.setHorizontalSpacing(10)
+        self.overlay_controls_row.setVerticalSpacing(6)
         self.overlay_empty_label = QLabel("No overlays loaded")
         self.overlay_empty_label.setObjectName("overlayEmptyLabel")
         self.overlay_empty_label.setAlignment(self.Qt.AlignCenter)
         self.overlay_empty_hint = QLabel("Click “Open Overlay(s)…” to load one or more capture files (CSV).")
         self.overlay_empty_hint.setObjectName("overlayEmptyHint")
         self.overlay_empty_hint.setAlignment(self.Qt.AlignCenter)
-        self.overlay_controls_row.addStretch(1)
-        self.overlay_controls_row.addWidget(self.overlay_empty_label)
-        self.overlay_controls_row.addStretch(1)
+        self.overlay_controls_row.addWidget(self.overlay_empty_label, 0, 0, 1, 2)
         overlay_content_layout.addStretch(1)
         overlay_content_layout.addLayout(self.overlay_controls_row)
         overlay_content_layout.addWidget(self.overlay_empty_hint)
@@ -1096,9 +1123,7 @@ class RFBridgeWindow:
             self.overlay_empty_label = QLabel("No overlays loaded")
             self.overlay_empty_label.setObjectName("overlayEmptyLabel")
             self.overlay_empty_label.setAlignment(self.Qt.AlignCenter)
-            self.overlay_controls_row.addStretch(1)
-            self.overlay_controls_row.addWidget(self.overlay_empty_label)
-            self.overlay_controls_row.addStretch(1)
+            self.overlay_controls_row.addWidget(self.overlay_empty_label, 0, 0, 1, 2)
             if hasattr(self, "overlay_empty_hint"):
                 self.overlay_empty_hint.setVisible(True)
             return
@@ -1106,23 +1131,27 @@ class RFBridgeWindow:
         if hasattr(self, "overlay_empty_hint"):
             self.overlay_empty_hint.setVisible(False)
 
-        for index, capture in enumerate(self.capture_overlays[:6]):
-            label = capture.get("name", f"Capture {index + 1}")
-            if len(label) > 24:
-                label = label[:21] + "…"
+        max_visible_controls = 10
+        columns = 2
+        for index, capture in enumerate(self.capture_overlays[:max_visible_controls]):
+            label = compact_capture_label(capture.get("name", f"Capture {index + 1}"))
             checkbox = QCheckBox(label)
+            checkbox.setToolTip(capture.get("name", label))
             checkbox.setChecked(bool(capture.get("visible", True)))
             checkbox.setStyleSheet(f"color: {capture.get('color', self.theme['text'])};")
             checkbox.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
-            self.overlay_controls_row.addWidget(checkbox)
+            row = index // columns
+            column = index % columns
+            self.overlay_controls_row.addWidget(checkbox, row, column)
             self.overlay_checkbox_widgets.append(checkbox)
 
-        if len(self.capture_overlays) > 6:
-            more_label = QLabel(f"+{len(self.capture_overlays) - 6} more in Overlays menu")
+        if len(self.capture_overlays) > max_visible_controls:
+            more_label = QLabel(f"+{len(self.capture_overlays) - max_visible_controls} more in Overlays menu")
             more_label.setObjectName("overlayEmptyLabel")
-            self.overlay_controls_row.addWidget(more_label)
+            self.overlay_controls_row.addWidget(more_label, max_visible_controls // columns, 0, 1, columns)
 
-        self.overlay_controls_row.addStretch(1)
+        for column in range(columns):
+            self.overlay_controls_row.setColumnStretch(column, 1)
 
     def sync_overlay_controls(self):
         """Keep overlay menu actions and panel checkboxes in sync without rebuilding.

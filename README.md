@@ -22,12 +22,11 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.6.3
+## What’s New in v1.9.6.4
 
-- Renamed timestamped CSV captures so date/time appears first in Finder and terminal listings.
-- New capture format: `YYYY-MM-DD_HH-MM-SS_Session_Device.csv`.
-- Preserved `latest_scan.csv` behavior for Wireless Workbench workflows.
-- Updated version metadata for v1.9.6.3.
+- CSV capture filenames now use `YYYY-MM-DD_daypart_HH-MM_session_device.csv` for easier show-day browsing.
+- Capture overlays now use a compact two-column checklist that stays readable with 5–10 loaded sweeps.
+- Overlay labels now emphasize daypart and time, with full filenames still available in tooltips and the Overlays menu.
 
 ## Features
 
@@ -134,8 +133,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.6.3-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.6.3-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.6.4-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.6.4-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:
