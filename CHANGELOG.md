@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.9.9.1
+
+- Combined startup Session Name and Storage Location prompts into one app launch dialog.
+- Fixed update-check dialog handling so GitHub results are routed back to the UI thread before showing messages.
+- Made update checks intentionally ignore GitHub prereleases and compare against the latest stable release.
+- Added Help menu actions for exporting diagnostics and copying debug info.
+- Added File menu actions to open or reveal `latest_scan.csv`.
+- Added scan health details for last scan age, reconnect attempts, mismatch count, and active port.
+- Added a collapsible app log and compact RF Summary toggle.
+- Added a release checklist script that compiles code, checks version metadata, prints expected artifacts, and shows the latest changelog section.
+- Refined Demo Mode custom range controls and softened marker label fills in Light Mode.
+
+## v1.9.9
+
+- Added a manual `Help > Check for Updates...` action that compares the local app version with the latest GitHub release.
+- Tuned Light appearance colors to reduce glare and improve panel/plot contrast.
+- Added a visible Auto-detecting startup state while RF Bridge looks for a tinySA in the background.
+- Slowed Demo Mode transient spike activity and added persistent wide TV-style interference blocks.
+- Added click-drag rectangle zoom on the RF graph while keeping zoom bounded to the active scan range.
+- Hid Mic Plot marker lines and labels when their frequency is outside the current zoomed graph window.
+- Kept the device port selector popup anchored below the dropdown control.
+- Refined tinySA unavailable/not-ready/reconnect failure messages with clearer next steps.
+- Added a version metadata consistency checker for release prep.
+- Added git ignore coverage for Python cache, build, and local OS/editor noise.
+- Expanded the in-repo wiki with practical quick start, WWB, Demo Mode, overlay, profile, and troubleshooting notes.
+
 ## v1.9.8.1
 
 - Added vertical scroll / trackpad wheel zoom on the RF frequency axis.

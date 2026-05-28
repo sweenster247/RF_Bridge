@@ -153,6 +153,66 @@ def prompt_storage_root_gui(default_root=None):
     return selected
 
 
+def prompt_session_setup_gui(default_name="RF Bridge Scan", default_root=None):
+    """Prompt for the session name and storage root in one startup dialog."""
+    from PySide6.QtWidgets import (
+        QApplication,
+        QDialog,
+        QDialogButtonBox,
+        QFileDialog,
+        QFormLayout,
+        QHBoxLayout,
+        QLineEdit,
+        QPushButton,
+        QVBoxLayout,
+    )
+
+    app = QApplication.instance() or QApplication([])
+    app.setQuitOnLastWindowClosed(False)
+    default_root = default_root or default_app_storage_root()
+    os.makedirs(default_root, exist_ok=True)
+
+    dialog = QDialog()
+    dialog.setWindowTitle("RF Bridge")
+    dialog.setMinimumWidth(560)
+
+    layout = QVBoxLayout(dialog)
+    form = QFormLayout()
+    session_edit = QLineEdit("")
+    storage_edit = QLineEdit(default_root)
+    browse_button = QPushButton("Browse...")
+    storage_row = QHBoxLayout()
+    storage_row.addWidget(storage_edit, stretch=1)
+    storage_row.addWidget(browse_button)
+
+    def choose_folder():
+        selected = QFileDialog.getExistingDirectory(
+            dialog,
+            "Choose RF Bridge Storage Location",
+            storage_edit.text() or default_root,
+        )
+        if selected:
+            storage_edit.setText(selected)
+
+    browse_button.clicked.connect(choose_folder)
+    form.addRow("Session Name", session_edit)
+    form.addRow("Storage Location", storage_row)
+
+    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addLayout(form)
+    layout.addWidget(buttons)
+
+    if dialog.exec() != QDialog.Accepted:
+        return None, None
+
+    session_name = session_edit.text().strip() or default_name
+    storage_root = storage_edit.text().strip() or default_root
+    AppSettings().set_storage_root(storage_root)
+    return session_name, storage_root
+
+
 def resolve_gig_name(args, use_app_mode):
     if args.gig:
         return args.gig
@@ -197,12 +257,20 @@ def main(argv=None):
     if use_app_mode:
         args.ui = True
 
-    gig_name = resolve_gig_name(args, use_app_mode)
+    storage_root = None
+    if use_app_mode and not args.gig and not args.output_dir:
+        settings = AppSettings()
+        gig_name, storage_root = prompt_session_setup_gui(default_root=settings.get_storage_root())
+    else:
+        gig_name = resolve_gig_name(args, use_app_mode)
     if gig_name is None:
         return
 
     gig_slug = safe_name(gig_name)
-    output_dir = resolve_output_dir(args, gig_slug, use_app_mode)
+    if storage_root:
+        output_dir = os.path.join(storage_root, "wwb_scans", gig_slug)
+    else:
+        output_dir = resolve_output_dir(args, gig_slug, use_app_mode)
 
     os.makedirs(
         output_dir,

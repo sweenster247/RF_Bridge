@@ -5,8 +5,21 @@ wwbscans/
 #Build and Publish
 scripts/publish_release.sh
 
+# Python local/cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # PyInstaller / app packaging
 *.app
 *.dmg
 build/
 dist/
+
+# Local OS/editor noise
+.DS_Store
+*.swp
+*.tmp

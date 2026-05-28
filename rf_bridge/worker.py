@@ -151,7 +151,7 @@ class ScanWorker(QObject):
             self._debug(f"[serial] reconnect failed: {exc}")
             self.error.emit(
                 "tinySA stopped responding and RF Bridge could not reconnect. "
-                "Power-cycle or restart the tinySA, then restart RF Bridge."
+                "Unplug/replug or power-cycle the tinySA, then click Connect again."
             )
             self.stop()
             return False

@@ -6,8 +6,10 @@ import heapq
 import json
 import math
 import os
+import platform
 import random
 import re
+import subprocess
 import time
 import webbrowser
 
@@ -63,30 +65,34 @@ THEMES = {
         "hover_bg": "#202020",
         "disconnected": "#aa3333",
         "connected": "#33cc77",
+        "connecting": "#d0a000",
         "axis": "#888888",
         "axis_text": "#dddddd",
         "marker": "#666666",
+        "grid_alpha": 0.25,
     },
     "Light": {
-        "window_bg": "#f5f5f5",
-        "panel_bg": "#ffffff",
-        "side_bg": "#fafafa",
-        "plot_bg": "#ffffff",
-        "text": "#202020",
-        "muted_text": "#303030",
-        "border": "#c8c8c8",
-        "button_bg": "#f0f0f0",
-        "button_hover": "#e4e4e4",
-        "button_pressed": "#d6d6d6",
-        "button_disabled_bg": "#eeeeee",
-        "button_disabled_text": "#999999",
-        "log_bg": "#ffffff",
-        "hover_bg": "#f7f7f7",
-        "disconnected": "#b00020",
-        "connected": "#087f3f",
-        "axis": "#555555",
-        "axis_text": "#202020",
-        "marker": "#909090",
+        "window_bg": "#eef1f4",
+        "panel_bg": "#f8f9fb",
+        "side_bg": "#e7ebef",
+        "plot_bg": "#f4f6f8",
+        "text": "#1c2430",
+        "muted_text": "#465260",
+        "border": "#b7c0ca",
+        "button_bg": "#ffffff",
+        "button_hover": "#e8edf2",
+        "button_pressed": "#dbe3eb",
+        "button_disabled_bg": "#edf1f5",
+        "button_disabled_text": "#8a96a3",
+        "log_bg": "#f8f9fb",
+        "hover_bg": "#eef2f6",
+        "disconnected": "#b4232c",
+        "connected": "#087443",
+        "connecting": "#9b6b00",
+        "axis": "#76818d",
+        "axis_text": "#2e3742",
+        "marker": "#7b8794",
+        "grid_alpha": 0.18,
     },
 }
 
@@ -100,6 +106,7 @@ DEMO_RANGE_PRESETS = [
     ("Legacy 470–560 MHz demo", 470.000, 560.000),
 ]
 DEMO_CONNECT_HOLD_MS = 2000
+DEMO_TV_CHANNEL_WIDTH_MHZ = 6.0
 
 # Fixed RF display range. Keep the graph from re-scaling when the tinySA
 # connects, when live data arrives, or when guide/marker items are refreshed.
@@ -132,6 +139,8 @@ class UiBridgeFactory:
             reconnecting = Signal(str)
             error = Signal(str)
             log = Signal(str)
+            update_checked = Signal(str, str)
+            update_failed = Signal(str)
 
         return UiBridge()
 
@@ -145,6 +154,7 @@ class BoundedFrequencyViewBoxFactory:
             def __init__(self):
                 super().__init__()
                 self.frequency_bounds = None
+                self.setMouseMode(self.RectMode)
 
             def set_frequency_bounds(self, bounds):
                 self.frequency_bounds = bounds
@@ -340,6 +350,93 @@ def capture_overlay_daypart(name):
     return "Other"
 
 
+def version_tuple(version):
+    parts = re.findall(r"\d+", str(version))
+    return tuple(int(part) for part in parts)
+
+
+def is_newer_version(candidate, current):
+    candidate_parts = version_tuple(candidate)
+    current_parts = version_tuple(current)
+    length = max(len(candidate_parts), len(current_parts))
+    candidate_parts += (0,) * (length - len(candidate_parts))
+    current_parts += (0,) * (length - len(current_parts))
+    return candidate_parts > current_parts
+
+
+class UpdateCheckWorkerFactory:
+    """Create a worker that checks GitHub releases away from the GUI thread."""
+
+    @staticmethod
+    def create():
+        from PySide6.QtCore import QObject, Signal, Slot
+        import urllib.error
+        import urllib.request
+
+        class UpdateCheckWorker(QObject):
+            checked = Signal(str, str)
+            failed = Signal(str)
+            finished = Signal()
+
+            @Slot()
+            def start(self):
+                request = urllib.request.Request(
+                    "https://api.github.com/repos/sweenster247/RF_Bridge/releases?per_page=20",
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": f"RF-Bridge/{__version__}",
+                    },
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=8) as response:
+                        payload = json.loads(response.read().decode("utf-8"))
+                    releases = payload if isinstance(payload, list) else [payload]
+                    stable_releases = [
+                        release for release in releases
+                        if not release.get("draft") and not release.get("prerelease")
+                    ]
+                    if not stable_releases:
+                        raise ValueError("GitHub did not return a stable release.")
+                    latest_release = stable_releases[0]
+                    tag = str(latest_release.get("tag_name") or latest_release.get("name") or "").strip()
+                    url = str(latest_release.get("html_url") or "https://github.com/sweenster247/RF_Bridge/releases")
+                    latest = tag[1:] if tag.lower().startswith("v") else tag
+                    if not latest:
+                        raise ValueError("GitHub did not return a release version.")
+                    self.checked.emit(latest, url)
+                except urllib.error.URLError as exc:
+                    self.failed.emit(f"Could not reach GitHub: {exc.reason}")
+                except Exception as exc:
+                    self.failed.emit(str(exc))
+                finally:
+                    self.finished.emit()
+
+        return UpdateCheckWorker()
+
+
+class DownwardComboBoxFactory:
+    """Create a combo box that keeps its popup below the control."""
+
+    @staticmethod
+    def create(combo_box_class):
+        from PySide6.QtCore import QTimer
+
+        class DownwardComboBox(combo_box_class):
+            def showPopup(self):
+                super().showPopup()
+
+                def place_popup():
+                    try:
+                        popup = self.view().window()
+                        popup.move(self.mapToGlobal(self.rect().bottomLeft()))
+                    except Exception:
+                        pass
+
+                QTimer.singleShot(0, place_popup)
+
+        return DownwardComboBox()
+
+
 class RFBridgeWindow:
     def __init__(self, output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None, debug_serial=False):
         from PySide6.QtCore import Qt, QThread, Signal, QMetaObject, Q_ARG, QTimer, QSize
@@ -404,6 +501,12 @@ class RFBridgeWindow:
         self.last_auto_trace_time = 0
         self.scan_error_count = 0
         self.scan_mismatch_count = 0
+        self.reconnect_attempt_count = 0
+        self.last_scan_received_time = None
+        self.active_port = None
+        self.log_history = deque(maxlen=200)
+        self.log_collapsed = False
+        self.summary_compact = False
         self.auto_connect_in_progress = False
         self.force_disconnected_actions = False
         self.pending_disconnect_status = None
@@ -415,6 +518,8 @@ class RFBridgeWindow:
         self.worker = None
         self.auto_detect_thread = None
         self.auto_detect_worker = None
+        self.update_check_thread = None
+        self.update_check_worker = None
         self.port_selection_touched = False
         self.suppress_plot_click_until = 0.0
         self.demo_timer = None
@@ -438,6 +543,8 @@ class RFBridgeWindow:
         self.ui_bridge.reconnecting.connect(self.on_worker_reconnecting)
         self.ui_bridge.log.connect(self.log)
         self.ui_bridge.disconnected.connect(self.on_disconnected)
+        self.ui_bridge.update_checked.connect(self.on_update_check_finished)
+        self.ui_bridge.update_failed.connect(self.on_update_check_failed)
 
         saved_refresh = self.settings.get_float("refresh_seconds", ui_update_seconds)
         self.refresh_index = min(
@@ -559,7 +666,7 @@ class RFBridgeWindow:
         self.connection_status.setObjectName("connectionStatus")
         self.connection_status.setMinimumWidth(0)
         self.connection_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.port_combo = QComboBox()
+        self.port_combo = DownwardComboBoxFactory.create(QComboBox)
         self.refresh_ports_button = QPushButton("Refresh")
         self.connect_button = QPushButton("Connect")
         self.disconnect_button = QPushButton("Disconnect")
@@ -668,7 +775,7 @@ class RFBridgeWindow:
         self.plot = pg.PlotWidget(viewBox=self.frequency_view_box)
         self.plot.setBackground(self.theme["plot_bg"])
         self.plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.plot.showGrid(x=True, y=True, alpha=0.25)
+        self.plot.showGrid(x=True, y=True, alpha=self.theme["grid_alpha"])
         self.plot.setLabel("bottom", "Frequency", units="MHz")
         self.plot.setLabel("left", "dBm")
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
@@ -735,6 +842,9 @@ class RFBridgeWindow:
         self.return_live_button = QPushButton("  Return to Live")
         self.return_live_button.setToolTip("Return the graph to the live trace")
         self.return_live_button.setEnabled(False)
+        self.compact_summary_button = QPushButton("Compact Summary")
+        self.compact_summary_button.setObjectName("secondaryButton")
+        self.compact_summary_button.setToolTip("Toggle a shorter RF summary panel")
 
         control_icons = (
             (self.peak_button, "icons/icon-peak.svg"),
@@ -763,10 +873,14 @@ class RFBridgeWindow:
         side_layout.addLayout(peak_row)
         side_layout.addLayout(live_row)
         side_layout.addWidget(self.return_live_button)
+        side_layout.addWidget(self.compact_summary_button)
 
         content_layout.addWidget(self.plot, stretch=1)
         content_layout.addWidget(side_panel)
 
+        self.log_toggle_button = QPushButton("Hide Log")
+        self.log_toggle_button.setObjectName("secondaryButton")
+        self.log_toggle_button.setToolTip("Collapse or expand the app log")
         self.log_box = QTextEdit()
         self.log_box.setObjectName("logBox")
         self.log_box.setReadOnly(True)
@@ -781,6 +895,7 @@ class RFBridgeWindow:
 
         root_layout.addLayout(top_layout)
         root_layout.addLayout(content_layout, stretch=2)
+        root_layout.addWidget(self.log_toggle_button)
         root_layout.addWidget(self.log_box)
         root_layout.addWidget(self.status_label)
         self.window.setCentralWidget(root)
@@ -799,6 +914,8 @@ class RFBridgeWindow:
         self.refresh_button.customContextMenuRequested.connect(self.show_refresh_menu)
         self.freeze_button.clicked.connect(self.toggle_freeze)
         self.return_live_button.clicked.connect(self.return_to_live)
+        self.compact_summary_button.clicked.connect(self.toggle_compact_summary)
+        self.log_toggle_button.clicked.connect(self.toggle_log_panel)
         self.open_overlay_button.clicked.connect(self.open_capture_overlays)
         self.clear_overlay_button.clicked.connect(self.clear_capture_overlays)
         self.mic_plot_nav_button.clicked.connect(self.open_mic_plot)
@@ -992,7 +1109,7 @@ class RFBridgeWindow:
                 lambda _checked=False, marker_freq=freq: self.prompt_add_mic_marker(marker_freq)
             )
 
-        reset_action = menu.addAction("Reset Frequency Range")
+        reset_action = menu.addAction("Reset View")
         reset_action.triggered.connect(self.reset_frequency_view)
         menu.exec(QCursor.pos())
         self.suppress_plot_click_until = time.monotonic() + 0.35
@@ -1007,6 +1124,14 @@ class RFBridgeWindow:
         open_capture_action = self.QAction("Open Capture…", self.window)
         open_capture_action.triggered.connect(self.open_capture)
         file_menu.addAction(open_capture_action)
+
+        open_latest_action = self.QAction("Open Latest CSV", self.window)
+        open_latest_action.triggered.connect(self.open_latest_csv)
+        file_menu.addAction(open_latest_action)
+
+        reveal_latest_action = self.QAction("Reveal Latest CSV", self.window)
+        reveal_latest_action.triggered.connect(self.reveal_latest_csv)
+        file_menu.addAction(reveal_latest_action)
 
         return_live_action = self.QAction("Return to Live", self.window)
         return_live_action.triggered.connect(self.return_to_live)
@@ -1047,6 +1172,10 @@ class RFBridgeWindow:
         tools_menu.addAction(mic_plot_action)
 
         help_menu = self.window.menuBar().addMenu("Help")
+        update_action = self.QAction("Check for Updates…", self.window)
+        update_action.triggered.connect(self.check_for_updates)
+        help_menu.addAction(update_action)
+
         wiki_action = self.QAction("RF Bridge Wiki…", self.window)
         wiki_action.triggered.connect(self.open_wiki)
         help_menu.addAction(wiki_action)
@@ -1054,6 +1183,14 @@ class RFBridgeWindow:
         open_folder_action = self.QAction("Open Scan Folder", self.window)
         open_folder_action.triggered.connect(self.open_scan_folder)
         help_menu.addAction(open_folder_action)
+
+        export_diagnostics_action = self.QAction("Export Diagnostics...", self.window)
+        export_diagnostics_action.triggered.connect(self.export_diagnostics)
+        help_menu.addAction(export_diagnostics_action)
+
+        copy_debug_action = self.QAction("Copy Debug Info", self.window)
+        copy_debug_action.triggered.connect(self.copy_debug_info)
+        help_menu.addAction(copy_debug_action)
 
         about_action = self.QAction("About RF Bridge", self.window)
         about_action.triggered.connect(self.open_about)
@@ -1064,6 +1201,7 @@ class RFBridgeWindow:
         self.theme = THEMES[self.theme_name]
         self.window.setStyleSheet(self.stylesheet())
         self.plot.setBackground(self.theme["plot_bg"])
+        self.plot.showGrid(x=True, y=True, alpha=self.theme["grid_alpha"])
         axis_pen = self.pg.mkPen(self.theme["axis"])
         self.plot.getAxis("bottom").setPen(axis_pen)
         self.plot.getAxis("left").setPen(axis_pen)
@@ -1498,12 +1636,161 @@ class RFBridgeWindow:
         webbrowser.open("https://github.com/sweenster247/RF_Bridge/wiki")
         self.log("Opened RF Bridge wiki")
 
+    def check_for_updates(self):
+        if self.update_check_thread is not None:
+            self.log("Update check already running")
+            return
+
+        self.update_check_thread = self.QThread()
+        self.update_check_worker = UpdateCheckWorkerFactory.create()
+        self.update_check_worker.moveToThread(self.update_check_thread)
+        self.update_check_thread.started.connect(self.update_check_worker.start)
+        self.update_check_worker.checked.connect(self.ui_bridge.update_checked)
+        self.update_check_worker.failed.connect(self.ui_bridge.update_failed)
+        self.update_check_worker.finished.connect(self.update_check_thread.quit)
+        self.update_check_thread.finished.connect(self.update_check_worker.deleteLater)
+        self.update_check_thread.finished.connect(self.update_check_thread.deleteLater)
+        self.update_check_thread.finished.connect(self.clear_update_check_refs)
+        self.update_check_thread.start()
+        self.log("Checking GitHub releases for updates...")
+
+    def on_update_check_finished(self, latest_version, release_url):
+        if is_newer_version(latest_version, __version__):
+            message = (
+                f"RF Bridge {latest_version} is available.\n\n"
+                f"You are running {__version__}.\n\n"
+                "Open the GitHub release page to download the latest package?"
+            )
+            answer = self.QMessageBox.question(
+                self.window,
+                "RF Bridge Update Available",
+                message,
+                self.QMessageBox.Yes | self.QMessageBox.No,
+                self.QMessageBox.Yes,
+            )
+            if answer == self.QMessageBox.Yes:
+                webbrowser.open(release_url)
+                self.log(f"Opened RF Bridge {latest_version} release page")
+            else:
+                self.log(f"Update available: {latest_version}")
+            return
+
+        if is_newer_version(__version__, latest_version):
+            self.QMessageBox.information(
+                self.window,
+                "RF Bridge Is Ahead of Published Release",
+                (
+                    f"You are running RF Bridge {__version__}.\n\n"
+                    f"The latest published GitHub release is {latest_version}."
+                ),
+            )
+            self.log(f"Update check complete: local {__version__} is newer than published {latest_version}")
+            return
+
+        self.QMessageBox.information(
+            self.window,
+            "RF Bridge Is Up to Date",
+            f"RF Bridge {__version__} matches the latest published release.",
+        )
+        self.log(f"Update check complete: {__version__} matches latest release")
+
+    def on_update_check_failed(self, message):
+        self.QMessageBox.information(
+            self.window,
+            "Could Not Check for Updates",
+            f"RF Bridge could not check GitHub right now.\n\n{message}",
+        )
+        self.log(f"Update check failed: {message}")
+
+    def clear_update_check_refs(self):
+        self.update_check_worker = None
+        self.update_check_thread = None
+
     def open_scan_folder(self):
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
         os.makedirs(self.output_dir, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(self.output_dir))
         self.log("Opened scan folder")
+
+    def latest_csv_path(self):
+        return os.path.join(self.output_dir, "latest_scan.csv")
+
+    def open_latest_csv(self):
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        path = self.latest_csv_path()
+        if not os.path.exists(path):
+            self.show_error("latest_scan.csv is not available yet.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        self.log("Opened latest_scan.csv")
+
+    def reveal_latest_csv(self):
+        path = self.latest_csv_path()
+        if not os.path.exists(path):
+            self.show_error("latest_scan.csv is not available yet.")
+            return
+        try:
+            subprocess.run(["open", "-R", path], check=False)
+        except Exception:
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self.output_dir))
+        self.log("Revealed latest_scan.csv")
+
+    def debug_info_text(self):
+        ports = candidate_serial_ports()
+        port_lines = [
+            f"  - {describe_port(port)}"
+            for port in ports
+        ] or ["  - none"]
+        last_scan_age = "never"
+        if self.last_scan_received_time:
+            last_scan_age = f"{time.time() - self.last_scan_received_time:.1f}s ago"
+        return "\n".join([
+            f"RF Bridge: {__version__}",
+            f"macOS: {platform.platform()}",
+            f"Session: {self.gig_slug}",
+            f"Output: {self.output_dir}",
+            f"Selected port: {self.selected_port or 'none'}",
+            f"Active port: {self.active_port or 'none'}",
+            f"Connected: {self.connected}",
+            f"Demo Mode: {self.demo_mode or self.demo_connect_pending}",
+            f"Refresh: {format_seconds(self.refresh_seconds)}s",
+            f"Last scan: {last_scan_age}",
+            f"Reconnect attempts: {self.reconnect_attempt_count}",
+            f"Scan mismatch count: {self.scan_mismatch_count}",
+            "Detected ports:",
+            *port_lines,
+            "",
+            "Recent log:",
+            *list(self.log_history)[-100:],
+        ])
+
+    def copy_debug_info(self):
+        self.app.clipboard().setText(self.debug_info_text())
+        self.log("Copied debug info")
+
+    def export_diagnostics(self):
+        from PySide6.QtWidgets import QFileDialog
+
+        default_path = os.path.join(
+            self.settings.get_storage_root(),
+            f"rf_bridge_diagnostics_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self.window,
+            "Export RF Bridge Diagnostics",
+            default_path,
+            "Text files (*.txt);;All files (*)",
+        )
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(self.debug_info_text())
+            file.write("\n")
+        self.log(f"Diagnostics exported: {os.path.basename(path)}")
 
     def open_mic_plot(self):
         from PySide6.QtWidgets import (
@@ -1896,16 +2183,34 @@ class RFBridgeWindow:
         margin = min(width * 0.04, width / 3)
         return max(view_low + margin, min(view_high - margin, freq))
 
+    def frequency_in_current_view(self, freq):
+        if not getattr(self, "plot", None):
+            return True
+
+        view_low, view_high = self.plot.getViewBox().viewRange()[0]
+        if view_high <= view_low:
+            return True
+
+        return view_low <= float(freq) <= view_high
+
     def update_mic_marker_label_view_positions(self, *args):
         visible_markers = [
             (index, marker)
             for index, marker in enumerate(self.mic_markers)
             if marker.get("visible", True)
+            and self.frequency_in_current_view(float(marker["frequency_mhz"]))
         ]
         label_positions = self.mic_marker_label_positions(visible_markers)
         for item in getattr(self, "mic_marker_label_items", []):
             label = item.get("label")
+            line = item.get("line")
             if label is None:
+                continue
+            is_visible = self.frequency_in_current_view(item["freq"])
+            label.setVisible(is_visible)
+            if line is not None:
+                line.setVisible(is_visible)
+            if not is_visible:
                 continue
             item["y"] = label_positions.get(item.get("index"), item["y"])
             label.setPos(
@@ -1977,6 +2282,7 @@ class RFBridgeWindow:
             (index, marker)
             for index, marker in enumerate(self.mic_markers)
             if marker.get("visible", True)
+            and self.frequency_in_current_view(float(marker["frequency_mhz"]))
         ]
         label_positions = self.mic_marker_label_positions(visible_markers)
 
@@ -2002,11 +2308,16 @@ class RFBridgeWindow:
             line.sigPositionChangeFinished.connect(
                 lambda item, marker_index=index: self.finish_mic_marker_drag(marker_index, item)
             )
+            label_fill = (
+                self.pg.mkBrush(255, 255, 255, 220)
+                if self.theme_name == "Light"
+                else self.pg.mkBrush(0, 0, 0, 150)
+            )
             label = self.pg.TextItem(
                 text=f"{marker['name']}\n{freq:.3f} MHz",
                 color=color,
                 anchor=(0.5, 0.0),
-                fill=self.pg.mkBrush(0, 0, 0, 150),
+                fill=label_fill,
                 border=self.pg.mkPen(color, width=0.75),
             )
             # Place mic plot labels slightly below the top of the graph so
@@ -2191,7 +2502,23 @@ class RFBridgeWindow:
         )
 
     def log(self, message):
-        self.log_box.append(f"[{time_12h()}] {message}")
+        line = f"[{time_12h()}] {message}"
+        self.log_history.append(line)
+        self.log_box.append(line)
+
+    def toggle_log_panel(self):
+        self.log_collapsed = not self.log_collapsed
+        self.log_box.setVisible(not self.log_collapsed)
+        self.log_toggle_button.setText("Show Log" if self.log_collapsed else "Hide Log")
+
+    def toggle_compact_summary(self):
+        self.summary_compact = not self.summary_compact
+        if self.summary_compact:
+            self.summary_label.setMaximumHeight(170)
+            self.compact_summary_button.setText("Full Summary")
+        else:
+            self.summary_label.setMaximumHeight(16777215)
+            self.compact_summary_button.setText("Compact Summary")
 
     def populate_ports(self):
         current = self.port_combo.currentData() or self.selected_port
@@ -2239,6 +2566,7 @@ class RFBridgeWindow:
         self.auto_detect_thread.finished.connect(self.auto_detect_worker.deleteLater)
         self.auto_detect_thread.finished.connect(self.auto_detect_thread.deleteLater)
         self.auto_detect_thread.finished.connect(self.clear_auto_detect_refs)
+        self.update_connection_state(False, "Auto-detecting...")
         self.auto_detect_thread.start()
 
     def on_auto_detected(self, port, _header, _scanned):
@@ -2249,6 +2577,7 @@ class RFBridgeWindow:
         current = self.port_combo.currentData()
         if self.port_selection_touched and current != port:
             self.log(f"Auto-detected tinySA: {port}; leaving selected port unchanged")
+            self.update_connection_state(False)
             return
 
         index = self.port_combo.findData(port)
@@ -2257,6 +2586,7 @@ class RFBridgeWindow:
             index = self.port_combo.findData(port)
         if index < 0:
             self.log(f"Auto-detected tinySA: {port}; select it manually to connect")
+            self.update_connection_state(False)
             return
         self.port_combo.setCurrentIndex(index)
         self.log(f"Auto-detected tinySA: {port}")
@@ -2265,6 +2595,8 @@ class RFBridgeWindow:
 
     def on_auto_detect_skipped(self, message):
         self.log(f"Auto-detect skipped: {message}")
+        if not self.connected and self.worker is None and not self.demo_mode:
+            self.update_connection_state(False)
 
     def clear_auto_detect_refs(self):
         self.auto_detect_worker = None
@@ -2284,6 +2616,7 @@ class RFBridgeWindow:
             return
 
         self.selected_port = port
+        self.active_port = port
         self.settings.set("last_port", port)
         self.force_disconnected_actions = False
         self.pending_disconnect_status = None
@@ -2365,6 +2698,9 @@ class RFBridgeWindow:
 
         def apply_preset(index):
             data = preset_combo.itemData(index)
+            is_custom = data is None
+            low_spin.setEnabled(is_custom)
+            high_spin.setEnabled(is_custom)
             if data:
                 low, high = data
                 low_spin.setValue(low)
@@ -2373,10 +2709,13 @@ class RFBridgeWindow:
         preset_combo.currentIndexChanged.connect(apply_preset)
         if not self.settings.get("demo_low_mhz"):
             apply_preset(0)
+        else:
+            preset_combo.setCurrentIndex(preset_combo.count() - 1)
+            apply_preset(preset_combo.currentIndex())
 
-        form.addRow("Preset", preset_combo)
-        form.addRow("Low frequency", low_spin)
-        form.addRow("High frequency", high_spin)
+        form.addRow("Range Mode", preset_combo)
+        form.addRow("Custom low", low_spin)
+        form.addRow("Custom high", high_spin)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
@@ -2426,6 +2765,7 @@ class RFBridgeWindow:
         self.demo_mode = True
         self.connected = True
         self.selected_port = "Demo Mode"
+        self.active_port = "Demo Mode"
         low = float(self.demo_low_mhz)
         high = float(self.demo_high_mhz)
         points = 450
@@ -2461,6 +2801,7 @@ class RFBridgeWindow:
         self.demo_mode = False
         self.connected = False
         self.selected_port = None
+        self.active_port = None
         self.latest_dbm = []
         self.display_dbm = []
         self.live_freqs_mhz = []
@@ -2475,14 +2816,29 @@ class RFBridgeWindow:
         self.disconnect_button.setText("Disconnect")
         self.log("Demo Mode stopped")
 
+    def demo_tv_bands(self, low, high):
+        span = max(1.0, high - low)
+        band_count = 2 if span >= 48.0 else 1
+        ratios = (0.34, 0.72) if band_count == 2 else (0.55,)
+        bands = []
+        for index, ratio in enumerate(ratios):
+            raw_center = low + (span * ratio)
+            center = round((raw_center - 470.0) / DEMO_TV_CHANNEL_WIDTH_MHZ) * DEMO_TV_CHANNEL_WIDTH_MHZ + 470.0
+            half_width = min(DEMO_TV_CHANNEL_WIDTH_MHZ / 2.0, span * 0.18)
+            center = min(max(center, low + half_width), high - half_width)
+            if not bands or all(abs(center - existing[0]) > DEMO_TV_CHANNEL_WIDTH_MHZ for existing in bands):
+                bands.append((center, half_width, -64.0 - (index * 4.0)))
+        return bands
+
     def generate_demo_scan(self):
         if not self.demo_mode or not self.freqs_mhz:
             return
 
-        self.demo_phase += 0.28
+        self.demo_phase += 0.18
         low = min(self.freqs_mhz)
         high = max(self.freqs_mhz)
         span = max(1.0, high - low)
+        tv_bands = self.demo_tv_bands(low, high)
         shure_like_centers = [482.125, 506.500, 537.875, 584.250, 604.200]
         peaks = []
         for fallback_ratio, center in zip((0.18, 0.42, 0.68), shure_like_centers):
@@ -2490,14 +2846,30 @@ class RFBridgeWindow:
                 peaks.append((center, random.choice((-48, -51, -56)), max(0.12, span * 0.002)))
             else:
                 peaks.append((low + span * fallback_ratio, random.choice((-48, -51, -56)), max(0.12, span * 0.002)))
-        transient_spikes = [
-            (
-                random.uniform(low + span * 0.02, high - span * 0.02),
-                random.uniform(-74.0, -60.0),
-                random.uniform(max(0.035, span * 0.0004), max(0.09, span * 0.001)),
+        transient_spikes = []
+        if random.random() < 0.35:
+            transient_spikes.append(
+                (
+                    random.uniform(low + span * 0.02, high - span * 0.02),
+                    random.uniform(-76.0, -63.0),
+                    random.uniform(max(0.035, span * 0.0004), max(0.09, span * 0.001)),
+                )
             )
-            for _ in range(5)
-        ]
+        if random.random() < 0.10:
+            transient_spikes.append(
+                (
+                    random.uniform(low + span * 0.02, high - span * 0.02),
+                    random.uniform(-78.0, -66.0),
+                    random.uniform(max(0.035, span * 0.0004), max(0.08, span * 0.0009)),
+                )
+            )
+        impulse_center = None
+        if random.random() < 0.22:
+            impulse_center = (
+                random.uniform(low + span * 0.02, high - span * 0.02),
+                random.uniform(-84.0, -71.0),
+                random.uniform(max(0.025, span * 0.0003), max(0.055, span * 0.0007)),
+            )
         dbm = []
         for index, freq in enumerate(self.freqs_mhz):
             floor = (
@@ -2512,15 +2884,30 @@ class RFBridgeWindow:
                 jitter = random.uniform(-1.4, 1.0)
                 strength = math.exp(-((freq - center - drift) ** 2) / (2 * width * width))
                 level = max(level, (peak_level + jitter) * strength + floor * (1 - strength))
+            for center, half_width, band_level in tv_bands:
+                distance = abs(freq - center)
+                edge_softness = max(0.18, span * 0.0015)
+                if distance <= half_width:
+                    edge_strength = min(1.0, (half_width - distance) / edge_softness)
+                    plateau_strength = max(0.55, edge_strength)
+                    ripple = (
+                        1.6 * math.sin((freq - center) * 3.8)
+                        + 0.8 * math.sin((freq * 1.7) + self.demo_phase * 0.25)
+                    )
+                    tv_level = band_level + ripple
+                    level = max(level, tv_level * plateau_strength + floor * (1 - plateau_strength))
             for center, spike_level, width in transient_spikes:
                 strength = math.exp(-((freq - center) ** 2) / (2 * width * width))
                 level = max(level, spike_level * strength + floor * (1 - strength))
-            if random.random() < 0.018:
-                level = max(level, random.uniform(-82.0, -68.0))
+            if impulse_center is not None:
+                center, impulse_level, width = impulse_center
+                strength = math.exp(-((freq - center) ** 2) / (2 * width * width))
+                level = max(level, impulse_level * strength + floor * (1 - strength))
             dbm.append(level)
 
         self.latest_dbm = dbm
         self.freqs_mhz = self.live_freqs_mhz
+        self.last_scan_received_time = time.time()
         if not self.frozen:
             self.render_scan(dbm)
         self.update_status()
@@ -2531,6 +2918,8 @@ class RFBridgeWindow:
         self.pending_disconnect_status = None
         self.scan_mismatch_count = 0
         self.scan_error_count = 0
+        self.reconnect_attempt_count = 0
+        self.active_port = port
         self.connected = True
         self.selected_port = port
         self.device_name = version or "tinySA"
@@ -2558,6 +2947,7 @@ class RFBridgeWindow:
         status_text = self.pending_disconnect_status
         self.pending_disconnect_status = None
         self.connected = False
+        self.active_port = None
         self.scan_mismatch_count = 0
         self.update_connection_state(False, status_text)
         self.render_mic_markers()
@@ -2565,6 +2955,7 @@ class RFBridgeWindow:
             self.log("Disconnected")
 
     def on_worker_reconnecting(self, message):
+        self.reconnect_attempt_count += 1
         self.show_device_notice(message)
         self.update_connection_state(True, "Reconnecting…")
 
@@ -2593,15 +2984,15 @@ class RFBridgeWindow:
             self.log(message_text)
             self.mark_device_unavailable(
                 "Reconnect failed",
-                "tinySA stopped responding and RF Bridge could not reconnect. Power-cycle or restart the tinySA, then restart RF Bridge.",
+                "tinySA stopped responding and RF Bridge could not reconnect. Unplug/replug or power-cycle the tinySA, then click Connect again.",
             )
             return
 
         if self.is_device_unavailable_error(message_text):
             self.log("tinySA disconnected or stopped responding")
             self.mark_device_unavailable(
-                "Disconnected — tinySA unavailable",
-                "tinySA disconnected or stopped responding. Reconnect/power-cycle it, then connect again.",
+                "tinySA unavailable",
+                "tinySA disconnected or stopped responding. Unplug/replug or power-cycle it, then click Connect again.",
             )
             return
 
@@ -2616,9 +3007,9 @@ class RFBridgeWindow:
         if transient_empty_read:
             self.scan_error_count += 1
             self.mark_device_unavailable(
-                "Disconnected — tinySA not ready",
-                "tinySA is not returning data. Reboot/power-cycle the tinySA, then reconnect.",
-                "tinySA did not return data; disconnected for retry/reconnect",
+                "tinySA not ready",
+                "No scan data received. Check the tinySA sweep range, or power-cycle the device and click Connect again.",
+                "tinySA did not return scan data; disconnected for retry",
             )
             # Do not show a modal startup warning for this recoverable case. The
             # app should stay usable for capture overlays and manual reconnect.
@@ -2628,8 +3019,8 @@ class RFBridgeWindow:
         # Manual non-transient errors still show the warning so troubleshooting is obvious.
         if self.auto_connect_in_progress:
             self.mark_device_unavailable(
-                "Disconnected — tinySA not ready",
-                "tinySA is not ready. Reconnect or power-cycle it, then connect again.",
+                "tinySA not ready",
+                "tinySA is not ready. Reconnect or power-cycle it, then click Connect again.",
             )
             return
         self.show_error(message_text)
@@ -2639,9 +3030,14 @@ class RFBridgeWindow:
             self.force_disconnected_actions = False
         self.connected = connected
         status_text = text or ("Connected" if connected else "Disconnected")
-        is_connecting = "connecting" in status_text.lower() or "reconnecting" in status_text.lower()
+        lowered_status = status_text.lower()
+        is_connecting = (
+            "connecting" in lowered_status
+            or "reconnecting" in lowered_status
+            or "detecting" in lowered_status
+        )
         if is_connecting:
-            status_color = "#d0a000"
+            status_color = self.theme["connecting"]
         elif connected:
             status_color = self.theme["connected"]
         else:
@@ -2823,6 +3219,7 @@ class RFBridgeWindow:
 
     def on_scan_ready(self, dbm):
         self.scan_error_count = 0
+        self.last_scan_received_time = time.time()
         live_freqs = self.live_freqs_mhz or self.freqs_mhz
         if not live_freqs:
             return
@@ -2991,10 +3388,15 @@ class RFBridgeWindow:
         device_label = self.selected_port or "not connected"
         overlay_count = sum(1 for capture in self.capture_overlays if capture.get("visible", True))
         auto_label = "on" if self.auto_trace_enabled else "off"
+        active_label = self.active_port or device_label
+        last_scan_label = "never"
+        if self.last_scan_received_time:
+            last_scan_label = f"{int(max(0, now - self.last_scan_received_time))}s ago"
         if self.demo_mode or self.demo_connect_pending:
             self.status_label.setText(
                 f"Mode: {freeze_label}   |   CSV: disabled   |   "
-                f"Refresh: {format_seconds(self.refresh_seconds)}s   |   Overlays: {overlay_count}   |   Auto: {auto_label}"
+                f"Refresh: {format_seconds(self.refresh_seconds)}s   |   Last scan: {last_scan_label}   |   "
+                f"Overlays: {overlay_count}   |   Auto: {auto_label}"
             )
             return
         folder_label = os.path.basename(os.path.normpath(self.output_dir)) or self.output_dir
@@ -3002,7 +3404,9 @@ class RFBridgeWindow:
         self.status_label.setText(
             f"Folder: {folder_label}   |   Latest: {latest_label}   |   "
             f"Next: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
-            f"Mode: {freeze_label}   |   Overlays: {overlay_count}   |   Auto: {auto_label}"
+            f"Mode: {freeze_label}   |   Port: {active_label}   |   Last scan: {last_scan_label}   |   "
+            f"Reconnects: {self.reconnect_attempt_count}   |   Mismatch: {self.scan_mismatch_count}   |   "
+            f"Overlays: {overlay_count}   |   Auto: {auto_label}"
         )
 
     def handle_close_event(self, event):
@@ -3024,6 +3428,7 @@ class RFBridgeWindow:
         worker = self.worker
         worker_thread = self.worker_thread
         auto_detect_thread = self.auto_detect_thread
+        update_check_thread = self.update_check_thread
 
         if worker is not None:
             try:
@@ -3064,10 +3469,21 @@ class RFBridgeWindow:
             except RuntimeError:
                 pass
 
+        if update_check_thread is not None:
+            try:
+                update_check_thread.quit()
+                if not update_check_thread.wait(1000):
+                    update_check_thread.terminate()
+                    update_check_thread.wait(500)
+            except RuntimeError:
+                pass
+
         self.worker = None
         self.worker_thread = None
         self.auto_detect_worker = None
         self.auto_detect_thread = None
+        self.update_check_worker = None
+        self.update_check_thread = None
         self.connected = False
 
     def run(self):

@@ -22,10 +22,34 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
+## What’s New in v1.9.9.1
+
+- Combined startup Session Name and Storage Location into one launch dialog.
+- Fixed update-check dialog handling and made checks compare against the latest stable GitHub release.
+- Added diagnostics export and Copy Debug Info actions under Help.
+- Added Open Latest CSV and Reveal Latest CSV actions under File.
+- Added scan health details for last scan age, reconnect attempts, mismatch count, and active port.
+- Added a collapsible app log and compact RF Summary toggle.
+- Added a release checklist script for compile, version, artifact-name, and changelog review.
+- Refined Demo Mode custom range controls and Light Mode marker label fills.
+
+## What’s New in v1.9.9
+
+- Added `Help > Check for Updates…` to compare the installed app against the latest GitHub release.
+- Tuned Light Mode so panels, plot grid, and readouts feel calmer and less blown out.
+- Added a clearer `Auto-detecting...` startup state while tinySA detection runs in the background.
+- Slowed Demo Mode random transient spikes and added persistent wide TV-style interference blocks.
+- Added click-drag rectangle zoom on the RF graph.
+- Hid Mic Plot marker lines and labels when their frequency is outside the zoomed graph window.
+- Refined tinySA error messages with more practical reconnect/power-cycle guidance.
+- Added release-prep version consistency checks and stronger repo ignore rules for local cache/build files.
+- Expanded the in-repo wiki with more field-focused setup and troubleshooting notes.
+
 ## What’s New in v1.9.8.1
 
 - Vertical scroll / trackpad wheel gestures now zoom the RF frequency axis.
 - Horizontal scroll / trackpad gestures now pan left and right across the active scan range.
+- Click-drag the RF graph to zoom into a selected area.
 - Zoom and pan stay bounded to the connected tinySA or selected Demo Mode frequency range.
 - Double-click the graph to reset back to the full active frequency span.
 
@@ -95,6 +119,7 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 - DMG installer workflow
 - Light / Dark / System appearance modes
 - Persistent preferences/settings
+- Manual update check from the Help menu
 - Consolidated release build script
 
 ---
@@ -155,14 +180,26 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.8.1-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.8.1-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.9.1-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.9.1-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:
 
 ```bash
 brew install create-dmg
+```
+
+Before packaging a release, verify the version metadata is aligned:
+
+```bash
+python3 scripts/check_version_consistency.py
+```
+
+To run the local release checklist:
+
+```bash
+python3 scripts/release_checklist.py
 ```
 
 ---
