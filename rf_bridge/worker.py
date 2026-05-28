@@ -3,6 +3,7 @@
 import time
 
 import serial
+from serial.tools import list_ports
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from .config import BAUD, TINYSA_SERIAL_TIMEOUT_SECONDS, TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS, TINYSA_STARTUP_SETTLE_SECONDS
@@ -76,6 +77,41 @@ class ScanWorker(QObject):
             self.connected.emit(self.port, version, self.freqs_mhz)
         self.log.emit(f"Connected to {self.port}")
 
+    def _available_ports(self):
+        try:
+            return list(list_ports.comports())
+        except Exception:
+            return []
+
+    def _port_still_available(self):
+        ports = self._available_ports()
+        if not ports:
+            return False
+        return any(port.device == self.port for port in ports)
+
+    def _select_reconnect_port(self):
+        # Prefer the original selected port, but if macOS re-enumerates the
+        # tinySA under a new /dev/cu.* name, fall back to a likely tinySA port.
+        if self._port_still_available():
+            return self.port
+
+        ports = self._available_ports()
+        if not ports:
+            return None
+
+        likely = []
+        for port in ports:
+            combined = " ".join(
+                str(value or "")
+                for value in (port.device, port.description, port.manufacturer)
+            ).lower()
+            if "tinysa" in combined or "usb" in combined or "modem" in combined:
+                likely.append(port.device)
+        return likely[0] if likely else None
+
+    def _serial_looks_open(self):
+        return self.ser is not None and getattr(self.ser, "is_open", False)
+
     def _attempt_single_reconnect(self, reason):
         if self.reconnect_attempted or not self.running:
             return False
@@ -91,7 +127,23 @@ class ScanWorker(QObject):
 
         try:
             self._close_serial()
-            time.sleep(1.0)
+
+            reconnect_port = None
+            # USB serial devices can disappear briefly or return under a new
+            # /dev/cu.* path. Poll for a short window before declaring failure.
+            for _attempt in range(20):
+                reconnect_port = self._select_reconnect_port()
+                if reconnect_port:
+                    break
+                time.sleep(0.5)
+
+            if not reconnect_port:
+                raise serial.SerialException("tinySA serial port did not reappear")
+
+            if reconnect_port != self.port:
+                self.log.emit(f"tinySA reappeared as {reconnect_port}; reconnecting")
+                self.port = reconnect_port
+
             self._open_and_initialize(emit_connected=True)
             self.log.emit("tinySA reconnect successful; scanning resumed")
             return True
@@ -134,6 +186,8 @@ class ScanWorker(QObject):
             return
 
         try:
+            if not self._serial_looks_open():
+                raise serial.SerialException("tinySA serial port is no longer open")
             dbm = read_scan_dbm(self.ser, debug_log=self._debug)
             self._debug(f"[serial] parsed scan points={len(dbm)}")
             self.reconnect_attempted = False
@@ -141,11 +195,16 @@ class ScanWorker(QObject):
             # During app shutdown the serial port may already be closing. Do not
             # surface that as a user-facing scan error. For a live device fault,
             # try one automatic reconnect before escalating to the UI.
-            if self.running and self._attempt_single_reconnect(str(exc)):
-                return
             if self.running:
-                self.error.emit(f"Scan error: {exc}")
-            self.stop()
+                recovered = self._attempt_single_reconnect(str(exc))
+                if recovered:
+                    return
+                # _attempt_single_reconnect emits the user-facing failure and
+                # stops the worker when reconnect fails. Avoid a second generic
+                # scan error that can mask the reconnect message.
+                if not self._stopped_emitted:
+                    self.error.emit(f"Scan error: {exc}")
+                    self.stop()
             return
 
         if self.running:

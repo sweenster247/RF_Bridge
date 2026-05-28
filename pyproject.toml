@@ -1,6 +1,6 @@
 [project]
 name = "rf-bridge"
-version = "1.9.7.2"
+version = "1.9.7.5"
 description = "tinySA to WWB bridge and live RF visualization utility for macOS"
 requires-python = ">=3.11"
 dependencies = [

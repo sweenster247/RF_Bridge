@@ -1,12 +1,26 @@
 # Changelog
 
-## v1.9.7.2
+## v1.9.7.5
 
+- Fixed marker right-click state so the next normal left-click/drag does not reopen the marker context menu.
+- Reworked tinySA reconnect handling to make the one-shot recovery path visible and more reliable when USB serial disappears or re-enumerates.
+- Preserved v1.9.7.3/v1.9.7.4 marker editing, draggable marker labels, and capture workflows.
+
+## v1.9.7.4
+
+- Fixed marker context-menu mouse handling so normal left-click/drag behavior resumes immediately after right-click editing.
+- Improved tinySA disconnect recovery by explicitly detecting closed/lost serial ports and attempting one automatic reconnect before escalating.
+- Preserved v1.9.7.3 marker editing and draggable marker behavior.
+
+## v1.9.7.3
+
+- Restored right-click Edit Marker behavior after recent marker drag/label changes.
+- Edit Marker now supports marker name, frequency, color, and visibility while preserving draggable marker behavior.
 - Improved dense Mic Plot marker label placement with collision-aware lane assignment.
 - Added a fifth marker label lane for tightly packed wireless environments.
 - Grouped capture overlay controls by Morning, Afternoon, Evening, Overnight, and Other dayparts.
 - Restored startup tinySA auto-connect using a background detector so Demo Mode stays available immediately.
-- Updated app version metadata for v1.9.7.2.
+- Updated app version metadata for v1.9.7.3.
 
 ## v1.9.7.1
 

@@ -338,6 +338,7 @@ class RFBridgeWindow:
         self.auto_detect_thread = None
         self.auto_detect_worker = None
         self.port_selection_touched = False
+        self.suppress_plot_click_until = 0.0
         self.demo_timer = None
         self.demo_phase = 0.0
         self.demo_mode = False
@@ -865,6 +866,28 @@ class RFBridgeWindow:
     def show_plot_context_menu(self, event):
         from PySide6.QtGui import QCursor
 
+        # pyqtgraph can sometimes replay a context-menu callback after a
+        # marker label handled a right-click. Only show this menu for an
+        # actual right-click/context event, and swallow immediately following
+        # left-click cleanup events so normal marker dragging resumes.
+        try:
+            button = event.button()
+        except Exception:
+            button = None
+        if button is not None and button != self.Qt.RightButton:
+            try:
+                event.accept()
+            except Exception:
+                pass
+            return
+
+        if time.monotonic() < getattr(self, "suppress_plot_click_until", 0.0):
+            try:
+                event.accept()
+            except Exception:
+                pass
+            return
+
         scene_pos = event.scenePos()
         freq = self.plot_frequency_from_scene_pos(scene_pos)
         menu = self.QMenu(self.window)
@@ -872,6 +895,10 @@ class RFBridgeWindow:
         if freq is not None:
             marker_index, marker = self.nearest_mic_marker(freq)
             if marker is not None:
+                edit_action = menu.addAction(f"Edit Marker: {marker['name']}...")
+                edit_action.triggered.connect(
+                    lambda _checked=False, index=marker_index: self.prompt_edit_mic_marker(index)
+                )
                 remove_action = menu.addAction(f"Remove Marker: {marker['name']}")
                 remove_action.triggered.connect(
                     lambda _checked=False, index=marker_index: self.remove_mic_marker(index)
@@ -886,6 +913,11 @@ class RFBridgeWindow:
         reset_action = menu.addAction("Reset Frequency Range")
         reset_action.triggered.connect(self.reset_frequency_view)
         menu.exec(QCursor.pos())
+        self.suppress_plot_click_until = time.monotonic() + 0.35
+        try:
+            self.plot.scene().clearFocus()
+        except Exception:
+            pass
 
     def create_menus(self):
         file_menu = self.window.menuBar().addMenu("File")
@@ -1546,6 +1578,9 @@ class RFBridgeWindow:
         return None, None
 
     def on_plot_mouse_click(self, event):
+        if time.monotonic() < getattr(self, "suppress_plot_click_until", 0.0):
+            event.accept()
+            return
         if event.button() != self.Qt.RightButton:
             return
         event.accept()
@@ -1556,6 +1591,10 @@ class RFBridgeWindow:
 
         menu = self.QMenu(self.window)
         if marker is not None:
+            edit_action = menu.addAction(f"Edit Marker: {marker['name']}...")
+            edit_action.triggered.connect(
+                lambda _checked=False, index=marker_index: self.prompt_edit_mic_marker(index)
+            )
             remove_action = menu.addAction(f"Remove Marker: {marker['name']}")
             remove_action.triggered.connect(
                 lambda _checked=False, index=marker_index: self.remove_mic_marker(index)
@@ -1567,12 +1606,22 @@ class RFBridgeWindow:
             lambda _checked=False, marker_freq=freq_mhz: self.prompt_add_mic_marker(marker_freq)
         )
         menu.exec(QCursor.pos())
+        self.suppress_plot_click_until = time.monotonic() + 0.35
+        try:
+            self.plot.scene().clearFocus()
+        except Exception:
+            pass
 
     def on_mic_marker_label_click(self, event, marker_index, freq_mhz):
+        # Always accept marker-label clicks so they do not leak into the plot
+        # scene and get interpreted as a stale context-menu request. Left-click
+        # stays available for normal selection/drag behavior; right-click opens
+        # the marker menu.
+        event.accept()
         if event.button() != self.Qt.RightButton:
             return
 
-        event.accept()
+        self.suppress_plot_click_until = time.monotonic() + 0.35
         marker = None
         if 0 <= marker_index < len(self.mic_markers):
             marker = self.mic_markers[marker_index]
@@ -1612,6 +1661,79 @@ class RFBridgeWindow:
 
         self.render_mic_markers()
         self.log(f"Mic marker added: {name} at {freq_mhz:.3f} MHz")
+
+    def prompt_edit_mic_marker(self, marker_index):
+        if not (0 <= marker_index < len(self.mic_markers)):
+            return
+
+        from PySide6.QtWidgets import (
+            QCheckBox,
+            QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QDoubleSpinBox,
+            QFormLayout,
+            QLineEdit,
+            QVBoxLayout,
+        )
+
+        marker = dict(self.mic_markers[marker_index])
+        dialog = QDialog(self.window)
+        dialog.setWindowTitle("Edit Mic Marker")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+
+        name = QLineEdit(str(marker.get("name", "")))
+        frequency = QDoubleSpinBox()
+        frequency.setRange(1.000, 2000.000)
+        frequency.setDecimals(3)
+        frequency.setSingleStep(FREQUENCY_DISPLAY_STEP_MHZ)
+        frequency.setValue(float(marker.get("frequency_mhz", 500.000)))
+
+        color = QComboBox()
+        for color_name, color_value in MARKER_COLORS:
+            color.addItem(color_name, color_value)
+        current_color = marker.get("color", DEFAULT_MARKER_COLOR)
+        color_index = color.findData(current_color)
+        if color_index >= 0:
+            color.setCurrentIndex(color_index)
+
+        visible = QCheckBox("Show marker")
+        visible.setChecked(bool(marker.get("visible", True)))
+
+        form.addRow("Name", name)
+        form.addRow("Frequency", frequency)
+        form.addRow("Color", color)
+        form.addRow("Visible", visible)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        updated_marker = {
+            "name": name.text().strip(),
+            "frequency_mhz": float(frequency.value()),
+            "color": color.currentData() or DEFAULT_MARKER_COLOR,
+            "visible": visible.isChecked(),
+        }
+        updated = list(self.mic_markers)
+        updated[marker_index] = updated_marker
+        try:
+            self.mic_markers = save_markers(self.settings, updated)
+        except ValueError as exc:
+            self.show_error(str(exc))
+            return
+
+        self.render_mic_markers()
+        self.log(
+            f"Mic marker updated: {updated_marker['name']} "
+            f"at {updated_marker['frequency_mhz']:.3f} MHz"
+        )
 
     def remove_mic_marker(self, marker_index):
         if not (0 <= marker_index < len(self.mic_markers)):
