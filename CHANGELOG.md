@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.9.7.2
+
+- Improved dense Mic Plot marker label placement with collision-aware lane assignment.
+- Added a fifth marker label lane for tightly packed wireless environments.
+- Grouped capture overlay controls by Morning, Afternoon, Evening, Overnight, and Other dayparts.
+- Restored startup tinySA auto-connect using a background detector so Demo Mode stays available immediately.
+- Updated app version metadata for v1.9.7.2.
+
 ## v1.9.7.1
 
 - Mic marker text boxes can now be dragged directly to reposition the associated marker.

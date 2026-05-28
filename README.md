@@ -22,8 +22,11 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.7.1
+## What’s New in v1.9.7.2
 
+- Improved dense Mic Plot marker label spacing for closely packed frequencies.
+- Added daypart group headings to capture overlay controls.
+- Restored tinySA auto-connect at startup while keeping Demo Mode available immediately.
 - Graceful tinySA recovery if the device stops responding during a session.
 - RF Bridge now attempts one automatic reconnect without closing the app.
 - If reconnect fails, the UI recommends power-cycling/restarting the tinySA and restarting RF Bridge.
@@ -141,8 +144,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.7.1-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.7.1-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.7.2-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.7.2-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

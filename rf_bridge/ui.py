@@ -99,9 +99,10 @@ RF_Y_MIN = -110
 RF_Y_MAX = -10
 RF_Y_RANGE = RF_Y_MAX - RF_Y_MIN
 MIC_MARKER_HIT_RADIUS_MHZ = 0.25
-MIC_MARKER_LABEL_LANES = [-18, -30, -42, -54]
+MIC_MARKER_LABEL_LANES = [-18, -30, -42, -54, -66]
 MIC_MARKER_LABEL_MIN_GAP_MHZ = 8.0
 MIC_MARKER_LABEL_GAP_RATIO = 0.075
+MIC_MARKER_LABEL_PIXEL_PADDING = 28
 
 
 class UiBridgeFactory:
@@ -187,6 +188,31 @@ class BoundedFrequencyViewBoxFactory:
         return BoundedFrequencyViewBox()
 
 
+class AutoDetectWorkerFactory:
+    """Create a worker that probes tinySA ports away from the GUI thread."""
+
+    @staticmethod
+    def create():
+        from PySide6.QtCore import QObject, Signal, Slot
+
+        class AutoDetectWorker(QObject):
+            detected = Signal(str, str, list)
+            skipped = Signal(str)
+            finished = Signal()
+
+            @Slot()
+            def start(self):
+                try:
+                    port, header, scanned = find_tinysa_port()
+                    self.detected.emit(port, header, scanned)
+                except Exception as exc:
+                    self.skipped.emit(str(exc))
+                finally:
+                    self.finished.emit()
+
+        return AutoDetectWorker()
+
+
 def format_seconds(seconds):
     if float(seconds).is_integer():
         return str(int(seconds))
@@ -222,6 +248,18 @@ def compact_capture_label(name):
         return f"{hour}:{minute} · {remainder[:26]}"
 
     return stem[:42] + ("…" if len(stem) > 42 else "")
+
+
+def capture_overlay_daypart(name):
+    """Return the capture daypart encoded in RF Bridge filenames."""
+    stem = os.path.splitext(os.path.basename(name or ""))[0]
+    match = re.match(
+        r"^\d{4}-\d{2}-\d{2}_(Morning|Afternoon|Evening|Overnight|morning|afternoon|evening|overnight)_",
+        stem,
+    )
+    if match:
+        return match.group(1).title()
+    return "Other"
 
 
 class RFBridgeWindow:
@@ -283,6 +321,7 @@ class RFBridgeWindow:
         self.capture_overlay_items = []
         self.capture_overlay_actions = []
         self.overlay_checkbox_widgets = []
+        self.overlay_checkbox_indexes = []
         self.overlay_color_index = 0
         self.last_auto_trace_time = 0
         self.scan_error_count = 0
@@ -296,6 +335,9 @@ class RFBridgeWindow:
         self.connected = False
         self.worker_thread = None
         self.worker = None
+        self.auto_detect_thread = None
+        self.auto_detect_worker = None
+        self.port_selection_touched = False
         self.demo_timer = None
         self.demo_phase = 0.0
         self.demo_mode = False
@@ -665,6 +707,7 @@ class RFBridgeWindow:
         self.apply_theme()
 
         self.refresh_ports_button.clicked.connect(self.populate_ports)
+        self.port_combo.activated.connect(self.mark_port_selection_touched)
         self.connect_button.clicked.connect(self.connect_device)
         self.disconnect_button.clicked.connect(self.disconnect_device)
         self.peak_button.clicked.connect(self.toggle_peak)
@@ -697,7 +740,8 @@ class RFBridgeWindow:
             # shown and the Qt event loop is running.
             self.QTimer.singleShot(900, self.connect_device)
         else:
-            self.log("Demo Mode is ready. Select a tinySA port and Connect when needed.")
+            self.log("Demo Mode is ready. Looking for tinySA in the background.")
+            self.QTimer.singleShot(900, self.start_auto_detect)
 
     def resolve_theme_name(self, appearance):
         if appearance == "Light":
@@ -1124,6 +1168,7 @@ class RFBridgeWindow:
                 widget.setParent(None)
 
         self.overlay_checkbox_widgets = []
+        self.overlay_checkbox_indexes = []
         if not self.capture_overlays:
             self.overlay_empty_label = QLabel("No overlays loaded")
             self.overlay_empty_label.setObjectName("overlayEmptyLabel")
@@ -1138,22 +1183,45 @@ class RFBridgeWindow:
 
         max_visible_controls = 10
         columns = 2
-        for index, capture in enumerate(self.capture_overlays[:max_visible_controls]):
-            label = compact_capture_label(capture.get("name", f"Capture {index + 1}"))
-            checkbox = QCheckBox(label)
-            checkbox.setToolTip(capture.get("name", label))
-            checkbox.setChecked(bool(capture.get("visible", True)))
-            checkbox.setStyleSheet(f"color: {capture.get('color', self.theme['text'])};")
-            checkbox.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
-            row = index // columns
-            column = index % columns
-            self.overlay_controls_row.addWidget(checkbox, row, column)
-            self.overlay_checkbox_widgets.append(checkbox)
+        visible_controls = list(enumerate(self.capture_overlays[:max_visible_controls]))
+        row = 0
+        for daypart in ("Morning", "Afternoon", "Evening", "Overnight", "Other"):
+            daypart_items = [
+                (index, capture)
+                for index, capture in visible_controls
+                if capture_overlay_daypart(capture.get("name")) == daypart
+            ]
+            if not daypart_items:
+                continue
+
+            if row > 0:
+                row += 1
+            heading = QLabel(daypart)
+            heading.setObjectName("overlaySubtitle")
+            self.overlay_controls_row.addWidget(heading, row, 0, 1, columns)
+            row += 1
+
+            for item_index, (index, capture) in enumerate(daypart_items):
+                label = compact_capture_label(capture.get("name", f"Capture {index + 1}"))
+                checkbox = QCheckBox(label)
+                checkbox.setToolTip(capture.get("name", label))
+                checkbox.setChecked(bool(capture.get("visible", True)))
+                checkbox.setStyleSheet(f"color: {capture.get('color', self.theme['text'])};")
+                checkbox.toggled.connect(lambda checked, i=index: self.set_overlay_visible(i, checked))
+                column = item_index % columns
+                self.overlay_controls_row.addWidget(checkbox, row, column)
+                self.overlay_checkbox_widgets.append(checkbox)
+                self.overlay_checkbox_indexes.append(index)
+                if column == columns - 1:
+                    row += 1
+
+            if daypart_items and (len(daypart_items) % columns):
+                row += 1
 
         if len(self.capture_overlays) > max_visible_controls:
             more_label = QLabel(f"+{len(self.capture_overlays) - max_visible_controls} more in Overlays menu")
             more_label.setObjectName("overlayEmptyLabel")
-            self.overlay_controls_row.addWidget(more_label, max_visible_controls // columns, 0, 1, columns)
+            self.overlay_controls_row.addWidget(more_label, row, 0, 1, columns)
 
         for column in range(columns):
             self.overlay_controls_row.setColumnStretch(column, 1)
@@ -1172,7 +1240,10 @@ class RFBridgeWindow:
             action.setChecked(bool(self.capture_overlays[index].get("visible", True)))
             action.blockSignals(False)
 
-        for index, checkbox in enumerate(getattr(self, "overlay_checkbox_widgets", [])):
+        for index, checkbox in zip(
+            getattr(self, "overlay_checkbox_indexes", []),
+            getattr(self, "overlay_checkbox_widgets", []),
+        ):
             if index >= len(self.capture_overlays):
                 continue
             checkbox.blockSignals(True)
@@ -1560,30 +1631,43 @@ class RFBridgeWindow:
 
     def mic_marker_label_positions(self, visible_markers):
         placements = {}
-        lane_last_freqs = [None] * len(MIC_MARKER_LABEL_LANES)
         if self.freqs_mhz:
             span = max(self.freqs_mhz) - min(self.freqs_mhz)
         else:
             marker_freqs = [float(marker["frequency_mhz"]) for _index, marker in visible_markers]
             span = max(marker_freqs) - min(marker_freqs) if marker_freqs else 0
-        label_gap_mhz = max(MIC_MARKER_LABEL_MIN_GAP_MHZ, span * MIC_MARKER_LABEL_GAP_RATIO)
+        view_low, view_high = self.plot.getViewBox().viewRange()[0] if getattr(self, "plot", None) else (0, span)
+        view_span = max(view_high - view_low, span, 1.0)
+        plot_width = max(getattr(self.plot, "width", lambda: 900)(), 1) if getattr(self, "plot", None) else 900
+        minimum_gap = max(MIC_MARKER_LABEL_MIN_GAP_MHZ, span * MIC_MARKER_LABEL_GAP_RATIO)
+        lane_intervals = [[] for _lane in MIC_MARKER_LABEL_LANES]
+
+        def estimated_label_half_width(marker):
+            freq = float(marker["frequency_mhz"])
+            label_lines = [str(marker.get("name", "")), f"{freq:.3f} MHz"]
+            character_count = max(len(line) for line in label_lines)
+            estimated_pixels = max(88, (character_count * 8) + MIC_MARKER_LABEL_PIXEL_PADDING)
+            return max(minimum_gap / 2, (estimated_pixels / plot_width) * view_span / 2)
 
         for index, marker in sorted(
             visible_markers,
             key=lambda item: float(item[1]["frequency_mhz"]),
         ):
             freq = float(marker["frequency_mhz"])
+            label_x = self.clamped_mic_marker_label_x(freq)
+            half_width = estimated_label_half_width(marker)
+            interval = (label_x - half_width, label_x + half_width)
             lane_index = 0
-            for candidate, last_freq in enumerate(lane_last_freqs):
-                if last_freq is None or abs(freq - last_freq) > label_gap_mhz:
+            for candidate, intervals in enumerate(lane_intervals):
+                if all(interval[0] > existing[1] or interval[1] < existing[0] for existing in intervals):
                     lane_index = candidate
                     break
             else:
                 lane_index = min(
-                    range(len(lane_last_freqs)),
-                    key=lambda candidate: lane_last_freqs[candidate] or 0,
+                    range(len(lane_intervals)),
+                    key=lambda candidate: len(lane_intervals[candidate]),
                 )
-            lane_last_freqs[lane_index] = freq
+            lane_intervals[lane_index].append(interval)
             placements[index] = MIC_MARKER_LABEL_LANES[lane_index]
 
         return placements
@@ -1601,10 +1685,17 @@ class RFBridgeWindow:
         return max(view_low + margin, min(view_high - margin, freq))
 
     def update_mic_marker_label_view_positions(self, *args):
+        visible_markers = [
+            (index, marker)
+            for index, marker in enumerate(self.mic_markers)
+            if marker.get("visible", True)
+        ]
+        label_positions = self.mic_marker_label_positions(visible_markers)
         for item in getattr(self, "mic_marker_label_items", []):
             label = item.get("label")
             if label is None:
                 continue
+            item["y"] = label_positions.get(item.get("index"), item["y"])
             label.setPos(
                 self.clamped_mic_marker_label_x(item["freq"]),
                 item["y"],
@@ -1744,7 +1835,7 @@ class RFBridgeWindow:
             item["freq"] = freq
             label = item["label"]
             label.setText(f"{marker['name']}\n{freq:.3f} MHz")
-            label.setPos(self.clamped_mic_marker_label_x(freq), item["y"])
+            self.update_mic_marker_label_view_positions()
             break
 
     def finish_mic_marker_drag(self, marker_index, line_item):
@@ -1904,17 +1995,60 @@ class RFBridgeWindow:
         self.log(f"Found {len(ports)} serial port(s)")
 
     def try_auto_connect(self):
-        try:
-            port, header, scanned = find_tinysa_port()
-        except Exception as exc:
-            self.log(f"Auto-detect skipped: {exc}")
+        self.start_auto_detect()
+
+    def mark_port_selection_touched(self, _index=None):
+        self.port_selection_touched = True
+
+    def start_auto_detect(self):
+        if (
+            self.auto_detect_thread is not None
+            or self.connected
+            or self.demo_mode
+            or self.shutting_down
+        ):
             return
+
+        self.auto_detect_thread = self.QThread()
+        self.auto_detect_worker = AutoDetectWorkerFactory.create()
+        self.auto_detect_worker.moveToThread(self.auto_detect_thread)
+        self.auto_detect_thread.started.connect(self.auto_detect_worker.start)
+        self.auto_detect_worker.detected.connect(self.on_auto_detected)
+        self.auto_detect_worker.skipped.connect(self.on_auto_detect_skipped)
+        self.auto_detect_worker.finished.connect(self.auto_detect_thread.quit)
+        self.auto_detect_thread.finished.connect(self.auto_detect_worker.deleteLater)
+        self.auto_detect_thread.finished.connect(self.auto_detect_thread.deleteLater)
+        self.auto_detect_thread.finished.connect(self.clear_auto_detect_refs)
+        self.auto_detect_thread.start()
+
+    def on_auto_detected(self, port, _header, _scanned):
+        if self.connected or self.demo_mode or self.worker is not None or self.shutting_down:
+            self.log(f"Auto-detected tinySA: {port}; leaving current session unchanged")
+            return
+
+        current = self.port_combo.currentData()
+        if self.port_selection_touched and current != port:
+            self.log(f"Auto-detected tinySA: {port}; leaving selected port unchanged")
+            return
+
         index = self.port_combo.findData(port)
-        if index >= 0:
-            self.port_combo.setCurrentIndex(index)
+        if index < 0:
+            self.port_combo.addItem(f"Manual: {port}", port)
+            index = self.port_combo.findData(port)
+        if index < 0:
+            self.log(f"Auto-detected tinySA: {port}; select it manually to connect")
+            return
+        self.port_combo.setCurrentIndex(index)
         self.log(f"Auto-detected tinySA: {port}")
         self.auto_connect_in_progress = True
         self.connect_device()
+
+    def on_auto_detect_skipped(self, message):
+        self.log(f"Auto-detect skipped: {message}")
+
+    def clear_auto_detect_refs(self):
+        self.auto_detect_worker = None
+        self.auto_detect_thread = None
 
     def connect_device(self):
         if self.connected:
@@ -2547,6 +2681,7 @@ class RFBridgeWindow:
 
         worker = self.worker
         worker_thread = self.worker_thread
+        auto_detect_thread = self.auto_detect_thread
 
         if worker is not None:
             try:
@@ -2578,8 +2713,19 @@ class RFBridgeWindow:
             except RuntimeError:
                 pass
 
+        if auto_detect_thread is not None:
+            try:
+                auto_detect_thread.quit()
+                if not auto_detect_thread.wait(1000):
+                    auto_detect_thread.terminate()
+                    auto_detect_thread.wait(500)
+            except RuntimeError:
+                pass
+
         self.worker = None
         self.worker_thread = None
+        self.auto_detect_worker = None
+        self.auto_detect_thread = None
         self.connected = False
 
     def run(self):
