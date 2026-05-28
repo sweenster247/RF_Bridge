@@ -8,7 +8,7 @@ from .utils import safe_name
 
 
 def capture_daypart(captured_at):
-    """Return a readable, capitalized daypart for show-day RF sweep filenames."""
+    """Return a readable daypart for show-day RF sweep filenames."""
     capture_time = captured_at.time()
     if time(5, 0) <= capture_time < time(12, 0):
         return "Morning"
@@ -19,13 +19,17 @@ def capture_daypart(captured_at):
     return "Overnight"
 
 
-def save_wwb_csv(output_dir, gig_slug, freqs_mhz, dbm, device_name="tinySA", filename_time_format="12h"):
+def capture_time_stamp(captured_at, time_format="12-hour"):
+    """Return a filename-safe capture time stamp."""
+    if str(time_format).lower().startswith("24"):
+        return captured_at.strftime("%H-%M")
+    return captured_at.strftime("%I-%M%p")
+
+
+def save_wwb_csv(output_dir, gig_slug, freqs_mhz, dbm, device_name="tinySA", time_format="12-hour"):
     captured_at = datetime.now()
     date_stamp = captured_at.strftime("%Y-%m-%d")
-    if filename_time_format == "24h":
-        time_stamp = captured_at.strftime("%H-%M")
-    else:
-        time_stamp = captured_at.strftime("%I-%M%p")
+    time_stamp = capture_time_stamp(captured_at, time_format)
     daypart = capture_daypart(captured_at)
     device_slug = safe_name(device_name or "tinySA")
 

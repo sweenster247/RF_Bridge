@@ -47,9 +47,9 @@ class AppSettings:
     def set_appearance(self, appearance):
         self.set("appearance", appearance)
 
-    def get_filename_time_format(self):
-        value = str(self.get("filename_time_format", "12h"))
-        return value if value in {"12h", "24h"} else "12h"
 
-    def set_filename_time_format(self, value):
-        self.set("filename_time_format", value if value in {"12h", "24h"} else "12h")
+    def get_filename_time_format(self):
+        return str(self.get("filename_time_format", "12-hour"))
+
+    def set_filename_time_format(self, time_format):
+        self.set("filename_time_format", time_format)

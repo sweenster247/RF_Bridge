@@ -17,6 +17,7 @@ class ScanWorker(QObject):
     connected = Signal(str, str, list)       # port, version, freqs_mhz
     scan_ready = Signal(list)                # dbm values
     disconnected = Signal()
+    reconnecting = Signal(str)
     error = Signal(str)
     log = Signal(str)
 
@@ -31,40 +32,85 @@ class ScanWorker(QObject):
         self.freqs_mhz = []
         self.running = False
         self._stopped_emitted = False
+        self.reconnect_attempted = False
+
+    def _close_serial(self):
+        if self.ser is not None:
+            try:
+                if self.ser.is_open:
+                    self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+
+    def _open_and_initialize(self, emit_connected=True):
+        self._debug(
+            f"[serial] Opening {self.port} @ {self.baud}; "
+            f"timeout={TINYSA_SERIAL_TIMEOUT_SECONDS}; write_timeout={TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS}"
+        )
+        self.ser = serial.Serial(
+            self.port,
+            self.baud,
+            timeout=TINYSA_SERIAL_TIMEOUT_SECONDS,
+            write_timeout=TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS,
+        )
+        self._debug(f"[serial] Open successful; is_open={self.ser.is_open}")
+        self.log.emit(f"Waiting {TINYSA_STARTUP_SETTLE_SECONDS:g}s for tinySA console…")
+        time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)
+
+        self.log.emit("Waking tinySA console…")
+        wake_console(self.ser, debug_log=self._debug)
+
+        version_output = send_command(self.ser, "version", debug_log=self._debug).strip()
+        version = clean_tinysa_version(version_output)
+        if version_output:
+            self._debug(f"[serial] version parsed={version!r}")
+        else:
+            self._debug("[serial] version response was empty")
+
+        self.log.emit("Reading tinySA frequency range…")
+        self.freqs_mhz = read_frequencies_mhz(self.ser, debug_log=self._debug)
+        self._debug(f"[serial] parsed frequency points={len(self.freqs_mhz)}")
+
+        if emit_connected:
+            self.connected.emit(self.port, version, self.freqs_mhz)
+        self.log.emit(f"Connected to {self.port}")
+
+    def _attempt_single_reconnect(self, reason):
+        if self.reconnect_attempted or not self.running:
+            return False
+
+        self.reconnect_attempted = True
+        notice = (
+            "tinySA stopped responding. Attempting one automatic reconnect; "
+            "RF Bridge will remain open."
+        )
+        self.reconnecting.emit(notice)
+        self.log.emit(notice)
+        self._debug(f"[serial] reconnect reason={reason!r}")
+
+        try:
+            self._close_serial()
+            time.sleep(1.0)
+            self._open_and_initialize(emit_connected=True)
+            self.log.emit("tinySA reconnect successful; scanning resumed")
+            return True
+        except Exception as exc:
+            self._debug(f"[serial] reconnect failed: {exc}")
+            self.error.emit(
+                "tinySA stopped responding and RF Bridge could not reconnect. "
+                "Power-cycle or restart the tinySA, then restart RF Bridge."
+            )
+            self.stop()
+            return False
 
     @Slot()
     def start(self):
         try:
-            self._debug(
-                f"[serial] Opening {self.port} @ {self.baud}; "
-                f"timeout={TINYSA_SERIAL_TIMEOUT_SECONDS}; write_timeout={TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS}"
-            )
-            self.ser = serial.Serial(
-                self.port,
-                self.baud,
-                timeout=TINYSA_SERIAL_TIMEOUT_SECONDS,
-                write_timeout=TINYSA_SERIAL_WRITE_TIMEOUT_SECONDS,
-            )
-            self._debug(f"[serial] Open successful; is_open={self.ser.is_open}")
-            self.log.emit(f"Waiting {TINYSA_STARTUP_SETTLE_SECONDS:g}s for tinySA console…")
-            time.sleep(TINYSA_STARTUP_SETTLE_SECONDS)
-
-            self.log.emit("Waking tinySA console…")
-            wake_console(self.ser, debug_log=self._debug)
-
-            version_output = send_command(self.ser, "version", debug_log=self._debug).strip()
-            version = clean_tinysa_version(version_output)
-            if version_output:
-                self._debug(f"[serial] version parsed={version!r}")
-            else:
-                self._debug("[serial] version response was empty")
-            self.log.emit("Reading tinySA frequency range…")
-            self.freqs_mhz = read_frequencies_mhz(self.ser, debug_log=self._debug)
-            self._debug(f"[serial] parsed frequency points={len(self.freqs_mhz)}")
+            self._open_and_initialize(emit_connected=True)
 
             self.running = True
-            self.connected.emit(self.port, version, self.freqs_mhz)
-            self.log.emit(f"Connected to {self.port}")
+            self.reconnect_attempted = False
 
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.poll)
@@ -90,9 +136,13 @@ class ScanWorker(QObject):
         try:
             dbm = read_scan_dbm(self.ser, debug_log=self._debug)
             self._debug(f"[serial] parsed scan points={len(dbm)}")
+            self.reconnect_attempted = False
         except Exception as exc:
             # During app shutdown the serial port may already be closing. Do not
-            # surface that as a user-facing scan error.
+            # surface that as a user-facing scan error. For a live device fault,
+            # try one automatic reconnect before escalating to the UI.
+            if self.running and self._attempt_single_reconnect(str(exc)):
+                return
             if self.running:
                 self.error.emit(f"Scan error: {exc}")
             self.stop()
@@ -116,13 +166,7 @@ class ScanWorker(QObject):
             self.timer.deleteLater()
             self.timer = None
 
-        if self.ser is not None:
-            try:
-                if self.ser.is_open:
-                    self.ser.close()
-            except Exception:
-                pass
-            self.ser = None
+        self._close_serial()
 
         self._stopped_emitted = True
         self.disconnected.emit()

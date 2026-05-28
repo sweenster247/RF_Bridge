@@ -23,7 +23,6 @@ from .version import __version__
 
 
 REFRESH_MODES = [0.5, 1, 2, 5, 10]
-FILENAME_TIME_FORMATS = [("12-hour time", "12h"), ("24-hour time", "24h")]
 MAX_CONSECUTIVE_SCAN_MISMATCHES = 3
 MAX_AUTO_TRACE_OVERLAYS = 6
 FREQUENCY_DISPLAY_STEP_MHZ = 0.005
@@ -35,6 +34,8 @@ DEVICE_UNAVAILABLE_MARKERS = (
     "write failed",
     "read failed",
     "could not open port",
+    "could not reconnect",
+    "stopped responding",
 )
 PEAK_MODES = [
     ("OFF", None),
@@ -119,6 +120,7 @@ class UiBridgeFactory:
             connected = Signal(str, str, list)
             scan_ready = Signal(list)
             disconnected = Signal()
+            reconnecting = Signal(str)
             error = Signal(str)
             log = Signal(str)
 
@@ -301,14 +303,15 @@ class RFBridgeWindow:
         self.settings = AppSettings()
         self.auto_trace_enabled = self.settings.get_bool("auto_trace_enabled", False)
         self.auto_trace_minutes = max(1.0, self.settings.get_float("auto_trace_minutes", 10.0))
-        self.appearance = self.settings.get_appearance()
         self.filename_time_format = self.settings.get_filename_time_format()
+        self.appearance = self.settings.get_appearance()
         self.theme_name = self.resolve_theme_name(self.appearance)
         self.theme = THEMES[self.theme_name]
         self.ui_bridge = UiBridgeFactory.create()
         self.ui_bridge.connected.connect(self.on_connected)
         self.ui_bridge.scan_ready.connect(self.on_scan_ready)
         self.ui_bridge.error.connect(self.on_worker_error)
+        self.ui_bridge.reconnecting.connect(self.on_worker_reconnecting)
         self.ui_bridge.log.connect(self.log)
         self.ui_bridge.disconnected.connect(self.on_disconnected)
 
@@ -1236,7 +1239,6 @@ class RFBridgeWindow:
             "storage_root": self.settings.get_storage_root(),
             "refresh_seconds": self.refresh_seconds,
             "appearance": self.appearance,
-            "filename_time_format": self.filename_time_format,
             "markers": self.mic_markers,
             "capture_overlays": [capture.get("path") for capture in self.capture_overlays if capture.get("path")],
         }
@@ -1283,8 +1285,6 @@ class RFBridgeWindow:
         self.set_refresh_interval(float(profile.get("refresh_seconds", self.refresh_seconds)))
         self.appearance = str(profile.get("appearance", self.appearance))
         self.settings.set_appearance(self.appearance)
-        self.filename_time_format = str(profile.get("filename_time_format", self.filename_time_format))
-        self.settings.set_filename_time_format(self.filename_time_format)
         self.apply_theme()
         self.clear_capture_overlays()
         for capture_path in profile.get("capture_overlays", []):
@@ -1698,6 +1698,14 @@ class RFBridgeWindow:
         refresh_combo = QComboBox()
         for value in REFRESH_MODES:
             refresh_combo.addItem(f"{format_seconds(value)} seconds", value)
+
+        filename_time_combo = QComboBox()
+        filename_time_combo.addItem("12-hour time, e.g. 09-15PM", "12-hour")
+        filename_time_combo.addItem("24-hour time, e.g. 21-15", "24-hour")
+        filename_time_index = filename_time_combo.findData(self.filename_time_format)
+        if filename_time_index < 0:
+            filename_time_index = 0
+        filename_time_combo.setCurrentIndex(filename_time_index)
         refresh_index = refresh_combo.findData(self.refresh_seconds)
         if refresh_index < 0:
             refresh_combo.addItem(f"Custom ({format_seconds(self.refresh_seconds)} seconds)", self.refresh_seconds)
@@ -1706,13 +1714,6 @@ class RFBridgeWindow:
             refresh_combo.setCurrentIndex(refresh_index)
 
         storage_edit = QLineEdit(self.settings.get_storage_root())
-
-        filename_time_combo = QComboBox()
-        for label, value in FILENAME_TIME_FORMATS:
-            filename_time_combo.addItem(label, value)
-        filename_time_index = filename_time_combo.findData(self.filename_time_format)
-        if filename_time_index >= 0:
-            filename_time_combo.setCurrentIndex(filename_time_index)
         browse_button = QPushButton("Browse…")
         storage_row = QHBoxLayout()
         storage_row.addWidget(storage_edit, stretch=1)
@@ -1740,13 +1741,13 @@ class RFBridgeWindow:
 
         form.addRow("Appearance", appearance_combo)
         form.addRow("Default refresh", refresh_combo)
-        form.addRow("Default storage", storage_row)
         form.addRow("Capture filename time", filename_time_combo)
+        form.addRow("Default storage", storage_row)
         form.addRow("Auto trace overlays", auto_trace_checkbox)
         form.addRow("Auto trace interval", auto_trace_minutes)
 
         note = QLabel(
-            "Storage changes apply to new app sessions. Capture filenames use YYYY-MM-DD_Daypart_Time_session_device.csv. Auto trace overlays use the live scan in memory and do not create extra CSV files."
+            "Storage changes apply to new app sessions. Auto trace overlays use the live scan in memory and do not create extra CSV files."
         )
         note.setWordWrap(True)
 
@@ -1765,19 +1766,19 @@ class RFBridgeWindow:
         self.appearance = appearance_combo.currentText()
         self.settings.set_appearance(self.appearance)
         self.settings.set_storage_root(storage_edit.text().strip() or self.settings.default_storage_root())
-        self.filename_time_format = str(filename_time_combo.currentData() or "12h")
-        self.settings.set_filename_time_format(self.filename_time_format)
         self.auto_trace_enabled = auto_trace_checkbox.isChecked()
         self.auto_trace_minutes = float(auto_trace_minutes.value())
+        self.filename_time_format = filename_time_combo.currentData() or "12-hour"
         self.settings.set("auto_trace_enabled", self.auto_trace_enabled)
         self.settings.set("auto_trace_minutes", self.auto_trace_minutes)
+        self.settings.set_filename_time_format(self.filename_time_format)
         self.set_refresh_interval(float(refresh_combo.currentData()))
         self.apply_theme()
         self.log(
             f"Preferences saved: appearance={self.appearance}, "
             f"storage={self.settings.get_storage_root()}, "
-            f"filename_time={self.filename_time_format}, "
-            f"auto_trace={'on' if self.auto_trace_enabled else 'off'}"
+            f"auto_trace={'on' if self.auto_trace_enabled else 'off'}, "
+            f"filename_time={self.filename_time_format}"
         )
 
     def log(self, message):
@@ -1842,6 +1843,7 @@ class RFBridgeWindow:
         self.worker.connected.connect(self.ui_bridge.connected)
         self.worker.scan_ready.connect(self.ui_bridge.scan_ready)
         self.worker.error.connect(self.ui_bridge.error)
+        self.worker.reconnecting.connect(self.ui_bridge.reconnecting)
         self.worker.log.connect(self.ui_bridge.log)
         self.worker.disconnected.connect(self.ui_bridge.disconnected)
         self.worker.disconnected.connect(self.worker_thread.quit)
@@ -2004,6 +2006,10 @@ class RFBridgeWindow:
         if was_connected:
             self.log("Disconnected")
 
+    def on_worker_reconnecting(self, message):
+        self.show_device_notice(message)
+        self.update_connection_state(True, "Reconnecting…")
+
     def is_device_unavailable_error(self, message):
         lowered = str(message).lower()
         return any(marker in lowered for marker in DEVICE_UNAVAILABLE_MARKERS)
@@ -2024,6 +2030,14 @@ class RFBridgeWindow:
 
         message_text = str(message)
         lowered = message_text.lower()
+
+        if "could not reconnect" in lowered:
+            self.log(message_text)
+            self.mark_device_unavailable(
+                "Reconnect failed",
+                "tinySA stopped responding and RF Bridge could not reconnect. Power-cycle or restart the tinySA, then restart RF Bridge.",
+            )
+            return
 
         if self.is_device_unavailable_error(message_text):
             self.log("tinySA disconnected or stopped responding")
