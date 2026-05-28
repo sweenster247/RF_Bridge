@@ -22,21 +22,22 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.7.5
+## What’s New in v1.9.8.1
 
-- Restored right-click Edit Marker behavior for Mic Plot markers.
-- Edit Marker supports marker name, frequency, color, and visibility while preserving draggable markers.
-- Improved dense Mic Plot marker label spacing for closely packed frequencies.
-- Added daypart group headings to capture overlay controls.
-- Restored tinySA auto-connect at startup while keeping Demo Mode available immediately.
-- Graceful tinySA recovery if the device stops responding during a session.
-- RF Bridge now attempts one automatic reconnect without closing the app.
-- If reconnect fails, the UI recommends power-cycling/restarting the tinySA and restarting RF Bridge.
-- CSV capture filenames now use `YYYY-MM-DD_Daypart_hh-mmAM_session_device.csv` by default for easier show-day browsing, with a 24-hour filename option in Preferences.
-- Capture overlays now use a compact two-column checklist that stays readable with 5–10 loaded sweeps.
-- Overlay labels now emphasize Daypart and time, with full filenames still available in tooltips and the Overlays menu.
-- Mic markers can now be dragged directly on the RF graph to adjust their frequency.
-- Mic marker text boxes now drag along with their marker lines, so either the line or label can be used to reposition a marker.
+- Vertical scroll / trackpad wheel gestures now zoom the RF frequency axis.
+- Horizontal scroll / trackpad gestures now pan left and right across the active scan range.
+- Zoom and pan stay bounded to the connected tinySA or selected Demo Mode frequency range.
+- Double-click the graph to reset back to the full active frequency span.
+
+## What’s New in v1.9.8
+
+- Added a status pill for clearer Disconnected, Connecting, Connected, and Reconnecting states.
+- Demo Mode now prompts for a simulated frequency range before connecting.
+- Added Demo Mode presets for broadcast UHF and common Shure-style UHF ranges, plus a custom range option.
+- Demo Mode now emulates the normal connection flow: Disconnected → range prompt → Connecting → Connected.
+- Demo Mode uses the same top-right disconnect button location as tinySA sessions for UI consistency.
+- Markers now stay hidden and non-interactive until Demo Mode or a tinySA session is connected.
+- Demo scans now adapt their simulated peaks and transient spikes to the selected frequency range.
 
 ## Features
 
@@ -47,6 +48,13 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 - Peak hold modes
 - Freeze Trace mode
 - RF summary display with Top RF Hits rounded to practical 0.005 MHz steps
+
+### Demo Mode
+- Prompted Demo Mode startup with selectable frequency ranges
+- Broadcast UHF and common Shure-style UHF presets
+- Custom demo low/high frequency fields
+- Simulated two-second connection state before the demo trace starts
+- Demo disconnect control in the same location as the tinySA disconnect control
 
 ### tinySA Integration
 - Automatic tinySA detection
@@ -74,6 +82,7 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 - Persistent marker storage
 - Expanded color-coded vertical marker lines
 - Staggered labels displayed directly on the RF graph
+- Markers remain hidden until a live tinySA session or Demo Mode is connected
 
 ### Profiles
 - Create a new gig profile during a multi-gig day
@@ -146,8 +155,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.7.5-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.7.5-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.8.1-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.8.1-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

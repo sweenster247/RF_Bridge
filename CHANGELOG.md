@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.9.8.1
+
+- Added vertical scroll / trackpad wheel zoom on the RF frequency axis.
+- Added horizontal scroll / trackpad panning within the active RF scan boundaries.
+- Kept zoom and pan bounded to the connected tinySA or selected Demo Mode frequency range.
+- Added a double-click reset path to return the graph to the full active frequency span.
+
+## v1.9.8
+
+- Added a clearer connection status pill for disconnected, connecting, connected, and reconnecting states.
+- Added prompted Demo Mode startup with adjustable low/high frequency ranges.
+- Added broadcast UHF and common Shure-style UHF Demo Mode presets plus custom ranges.
+- Updated Demo Mode to emulate the normal connection lifecycle with a short connecting state before the simulated trace starts.
+- Moved Demo Mode disconnect behavior into the same top-right disconnect button pattern used by tinySA sessions.
+- Hid marker lines and labels until Demo Mode or a tinySA session is connected, and disabled marker hit-testing while hidden.
+- Adapted Demo Mode simulated peaks and transient spikes to the selected demo range.
+
 ## v1.9.7.5
 
 - Fixed marker right-click state so the next normal left-click/drag does not reopen the marker context menu.

@@ -92,6 +92,14 @@ THEMES = {
 
 APPEARANCE_OPTIONS = ["System", "Dark", "Light"]
 DEMO_PORT = "__rf_bridge_demo__"
+DEMO_RANGE_PRESETS = [
+    ("Broadcast UHF / TV 14–36", 470.000, 608.000),
+    ("Shure G50-style UHF", 470.000, 534.000),
+    ("Shure H50-style UHF", 534.000, 598.000),
+    ("Shure J50A-style UHF", 572.000, 616.000),
+    ("Legacy 470–560 MHz demo", 470.000, 560.000),
+]
+DEMO_CONNECT_HOLD_MS = 2000
 
 # Fixed RF display range. Keep the graph from re-scaling when the tinySA
 # connects, when live data arrives, or when guide/marker items are refreshed.
@@ -140,35 +148,105 @@ class BoundedFrequencyViewBoxFactory:
 
             def set_frequency_bounds(self, bounds):
                 self.frequency_bounds = bounds
+                if bounds:
+                    low, high = bounds
+                    span = max(high - low, 0.001)
+                    # Allow useful wheel zoom, but prevent zooming so far in
+                    # that the trace becomes disorienting or numerically tiny.
+                    self.setLimits(
+                        xMin=low,
+                        xMax=high,
+                        minXRange=max(0.25, span / 500.0),
+                        maxXRange=span,
+                    )
                 self.clamp_x_range()
+
+            def _wheel_delta(self, event):
+                try:
+                    pixel_delta = event.pixelDelta()
+                    if not pixel_delta.isNull():
+                        return pixel_delta.x(), pixel_delta.y(), 80.0
+                except Exception:
+                    pass
+
+                try:
+                    angle_delta = event.angleDelta()
+                    return angle_delta.x(), angle_delta.y(), 120.0
+                except Exception:
+                    return 0.0, 0.0, 120.0
+
+            def _clamped_range(self, requested_low, requested_high):
+                if not self.frequency_bounds:
+                    return requested_low, requested_high
+
+                low, high = self.frequency_bounds
+                span = high - low
+                if span <= 0:
+                    return low, high
+
+                width = requested_high - requested_low
+                width = min(max(width, max(0.25, span / 500.0)), span)
+
+                if requested_low < low:
+                    requested_low = low
+                    requested_high = low + width
+                elif requested_high > high:
+                    requested_high = high
+                    requested_low = high - width
+
+                return requested_low, requested_high
 
             def clamp_x_range(self):
                 if not self.frequency_bounds:
                     return
 
-                low, high = self.frequency_bounds
-                if high <= low:
-                    return
-
-                view_range = self.viewRange()[0]
-                current_low, current_high = view_range
-                width = current_high - current_low
-                max_width = high - low
-
-                if width >= max_width:
-                    target = (low, high)
-                elif current_low < low:
-                    target = (low, low + width)
-                elif current_high > high:
-                    target = (high - width, high)
-                else:
-                    return
-
-                self.setXRange(target[0], target[1], padding=0)
+                current_low, current_high = self.viewRange()[0]
+                target = self._clamped_range(current_low, current_high)
+                if target != (current_low, current_high):
+                    self.setXRange(target[0], target[1], padding=0)
 
             def wheelEvent(self, event, axis=None):
-                super().wheelEvent(event, axis=axis)
-                self.clamp_x_range()
+                if not self.frequency_bounds:
+                    super().wheelEvent(event, axis=axis)
+                    return
+
+                delta_x, delta_y, unit = self._wheel_delta(event)
+                if delta_x == 0 and delta_y == 0:
+                    event.ignore()
+                    return
+
+                current_low, current_high = self.viewRange()[0]
+                width = current_high - current_low
+
+                # Horizontal wheel / trackpad gestures pan across the selected
+                # RF range without leaving the scan boundaries. Vertical wheel
+                # gestures zoom the frequency axis around the cursor position.
+                if abs(delta_x) > abs(delta_y):
+                    steps = delta_x / unit
+                    shift_mhz = steps * width * 0.12
+                    target_low, target_high = self._clamped_range(
+                        current_low + shift_mhz,
+                        current_high + shift_mhz,
+                    )
+                    self.setXRange(target_low, target_high, padding=0)
+                    event.accept()
+                    return
+
+                try:
+                    cursor_x = self.mapSceneToView(event.scenePos()).x()
+                except Exception:
+                    cursor_x = (current_low + current_high) / 2.0
+
+                zoom_steps = delta_y / unit
+                zoom_factor = 0.85 ** zoom_steps if zoom_steps else 1.0
+                new_width = width * zoom_factor
+                cursor_ratio = 0.5 if width <= 0 else (cursor_x - current_low) / width
+                cursor_ratio = min(max(cursor_ratio, 0.0), 1.0)
+                target_low = cursor_x - new_width * cursor_ratio
+                target_high = target_low + new_width
+                target_low, target_high = self._clamped_range(target_low, target_high)
+                self.setXRange(target_low, target_high, padding=0)
+                event.accept()
 
             def mouseDragEvent(self, event, axis=None):
                 super().mouseDragEvent(event, axis=axis)
@@ -342,6 +420,9 @@ class RFBridgeWindow:
         self.demo_timer = None
         self.demo_phase = 0.0
         self.demo_mode = False
+        self.demo_connect_pending = False
+        self.demo_low_mhz = 470.0
+        self.demo_high_mhz = 608.0
         self.port_map = {}
         self.settings = AppSettings()
         self.auto_trace_enabled = self.settings.get_bool("auto_trace_enabled", False)
@@ -786,7 +867,7 @@ class RFBridgeWindow:
         QLabel#hoverLabel {{ background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 8px; }}
         QLabel#statusLabel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }}
         QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; background: transparent; }}
-        QLabel#connectionStatus {{ font-weight: bold; background: transparent; font-size: 16px; }}
+        QLabel#connectionStatus {{ font-weight: bold; background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 12px; padding: 3px 10px; font-size: 14px; }}
         QLabel#deviceInfoLabel {{ color: {t['muted_text']}; background: transparent; font-size: 12px; padding-top: 2px; }}
         QLabel#deviceNoticeLabel {{ color: {t['disconnected']}; background: transparent; font-size: 12px; padding-top: 2px; }}
         QLabel#overlayHeaderIcon {{ color: {t['text']}; font-size: 26px; font-weight: bold; padding-right: 4px; background: transparent; }}
@@ -891,8 +972,9 @@ class RFBridgeWindow:
         scene_pos = event.scenePos()
         freq = self.plot_frequency_from_scene_pos(scene_pos)
         menu = self.QMenu(self.window)
+        markers_available = self.markers_available()
 
-        if freq is not None:
+        if freq is not None and markers_available:
             marker_index, marker = self.nearest_mic_marker(freq)
             if marker is not None:
                 edit_action = menu.addAction(f"Edit Marker: {marker['name']}...")
@@ -1556,6 +1638,8 @@ class RFBridgeWindow:
         return snap_display_frequency(freq)
 
     def nearest_mic_marker(self, freq_mhz):
+        if not self.markers_available():
+            return None, None
         visible_markers = [
             (index, marker)
             for index, marker in enumerate(self.mic_markers)
@@ -1589,6 +1673,9 @@ class RFBridgeWindow:
     def show_mic_marker_context_menu(self, freq_mhz, marker_index=None, marker=None):
         from PySide6.QtGui import QCursor
 
+        if not self.markers_available():
+            return
+
         menu = self.QMenu(self.window)
         if marker is not None:
             edit_action = menu.addAction(f"Edit Marker: {marker['name']}...")
@@ -1613,6 +1700,9 @@ class RFBridgeWindow:
             pass
 
     def on_mic_marker_label_click(self, event, marker_index, freq_mhz):
+        if not self.markers_available():
+            event.accept()
+            return
         # Always accept marker-label clicks so they do not leak into the plot
         # scene and get interpreted as a stale context-menu request. Left-click
         # stays available for normal selection/drag behavior; right-click opens
@@ -1824,6 +1914,9 @@ class RFBridgeWindow:
             )
 
     def on_mic_marker_label_drag(self, event, marker_index):
+        if not self.markers_available():
+            event.accept()
+            return
         if event.button() != self.Qt.LeftButton:
             return
 
@@ -1863,6 +1956,9 @@ class RFBridgeWindow:
                     self.show_error(str(exc))
                     self.render_mic_markers()
 
+    def markers_available(self):
+        return bool((self.connected or self.demo_mode) and self.freqs_mhz)
+
     def render_mic_markers(self):
         for item in self.mic_marker_items:
             try:
@@ -1873,6 +1969,8 @@ class RFBridgeWindow:
         self.mic_marker_label_items = []
 
         if not getattr(self, "plot", None):
+            return
+        if not self.markers_available():
             return
 
         visible_markers = [
@@ -2228,14 +2326,111 @@ class RFBridgeWindow:
         if not self.connected:
             self.update_connection_state(False, self.connection_status.text())
 
+    def prompt_demo_range(self):
+        from PySide6.QtWidgets import (
+            QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QDoubleSpinBox,
+            QFormLayout,
+            QLabel,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(self.window)
+        dialog.setWindowTitle("Start Demo Mode")
+        dialog.setMinimumWidth(420)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel("Choose the simulated RF range before connecting to Demo Mode.")
+        intro.setWordWrap(True)
+        form = QFormLayout()
+
+        preset_combo = QComboBox()
+        for label, low, high in DEMO_RANGE_PRESETS:
+            preset_combo.addItem(f"{label} ({low:.3f}–{high:.3f} MHz)", (low, high))
+        preset_combo.addItem("Custom range", None)
+
+        low_spin = QDoubleSpinBox()
+        low_spin.setRange(100.0, 1200.0)
+        low_spin.setDecimals(3)
+        low_spin.setSingleStep(1.0)
+        low_spin.setSuffix(" MHz")
+        high_spin = QDoubleSpinBox()
+        high_spin.setRange(100.0, 1200.0)
+        high_spin.setDecimals(3)
+        high_spin.setSingleStep(1.0)
+        high_spin.setSuffix(" MHz")
+        low_spin.setValue(float(self.settings.get_float("demo_low_mhz", 470.0)))
+        high_spin.setValue(float(self.settings.get_float("demo_high_mhz", 608.0)))
+
+        def apply_preset(index):
+            data = preset_combo.itemData(index)
+            if data:
+                low, high = data
+                low_spin.setValue(low)
+                high_spin.setValue(high)
+
+        preset_combo.currentIndexChanged.connect(apply_preset)
+        if not self.settings.get("demo_low_mhz"):
+            apply_preset(0)
+
+        form.addRow("Preset", preset_combo)
+        form.addRow("Low frequency", low_spin)
+        form.addRow("High frequency", high_spin)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(intro)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+        dialog.setStyleSheet(self.stylesheet())
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        low = float(low_spin.value())
+        high = float(high_spin.value())
+        if high <= low:
+            self.show_error("Demo Mode high frequency must be greater than low frequency.")
+            return None
+        if high - low < 1.0:
+            self.show_error("Demo Mode range must be at least 1 MHz wide.")
+            return None
+        self.settings.set("demo_low_mhz", low)
+        self.settings.set("demo_high_mhz", high)
+        return low, high
+
     def start_demo_mode(self):
+        selected_range = self.prompt_demo_range()
+        if selected_range is None:
+            self.log("Demo Mode canceled")
+            return
+        self.demo_low_mhz, self.demo_high_mhz = selected_range
+        self.demo_connect_pending = True
+        self.force_disconnected_actions = False
+        self.selected_port = "Demo Mode"
+        self.device_info_label.setText(
+            f"Device: Demo Mode\nRange: {self.demo_low_mhz:.3f}–{self.demo_high_mhz:.3f} MHz"
+        )
+        self.show_device_notice("Preparing simulated RF scan…")
+        self.update_connection_state(False, "Connecting…")
+        self.disconnect_button.setText("Disconnect Demo")
+        self.log(
+            f"Connecting to Demo Mode ({self.demo_low_mhz:.3f}–{self.demo_high_mhz:.3f} MHz)"
+        )
+        self.QTimer.singleShot(DEMO_CONNECT_HOLD_MS, self.finish_demo_connect)
+
+    def finish_demo_connect(self):
+        if not self.demo_connect_pending or self.shutting_down:
+            return
+        self.demo_connect_pending = False
         self.demo_mode = True
         self.connected = True
         self.selected_port = "Demo Mode"
-        self.freqs_mhz = [
-            470.0 + (index * (90.0 / 449))
-            for index in range(450)
-        ]
+        low = float(self.demo_low_mhz)
+        high = float(self.demo_high_mhz)
+        points = 450
+        step = (high - low) / (points - 1)
+        self.freqs_mhz = [low + (index * step) for index in range(points)]
         self.live_freqs_mhz = self.freqs_mhz.copy()
         self.latest_dbm = []
         self.display_dbm = []
@@ -2245,11 +2440,12 @@ class RFBridgeWindow:
         self.lock_plot_axes(preserve_x=True)
         self.update_frequency_range_labels()
         self.cursor_line.setPos(self.freqs_mhz[0])
-        self.device_info_label.setText("Device: Demo Mode\nRange: 470.000–560.000 MHz")
+        self.device_info_label.setText(f"Device: Demo Mode\nRange: {low:.3f}–{high:.3f} MHz")
         self.show_device_notice("Demo Mode is visual only. No CSV files are written.")
-        self.update_connection_state(True, "Demo Mode")
-        self.disconnect_button.setText("Disconnect")
-        self.log("Demo Mode started; CSV export disabled")
+        self.update_connection_state(True, "Connected")
+        self.disconnect_button.setText("Disconnect Demo")
+        self.render_mic_markers()
+        self.log("Demo Mode connected; CSV export disabled")
 
         self.demo_timer = self.QTimer(self.window)
         self.demo_timer.timeout.connect(self.generate_demo_scan)
@@ -2257,6 +2453,7 @@ class RFBridgeWindow:
         self.generate_demo_scan()
 
     def stop_demo_mode(self):
+        self.demo_connect_pending = False
         if self.demo_timer is not None:
             self.demo_timer.stop()
             self.demo_timer.deleteLater()
@@ -2273,6 +2470,7 @@ class RFBridgeWindow:
         self.update_frequency_range_labels([])
         self.clear_device_notice()
         self.update_top_frequencies([])
+        self.render_mic_markers()
         self.update_connection_state(False)
         self.disconnect_button.setText("Disconnect")
         self.log("Demo Mode stopped")
@@ -2282,16 +2480,21 @@ class RFBridgeWindow:
             return
 
         self.demo_phase += 0.28
-        peaks = [
-            (482.125, -48, 0.16),
-            (506.500, -56, 0.24),
-            (537.875, -51, 0.19),
-        ]
+        low = min(self.freqs_mhz)
+        high = max(self.freqs_mhz)
+        span = max(1.0, high - low)
+        shure_like_centers = [482.125, 506.500, 537.875, 584.250, 604.200]
+        peaks = []
+        for fallback_ratio, center in zip((0.18, 0.42, 0.68), shure_like_centers):
+            if low <= center <= high:
+                peaks.append((center, random.choice((-48, -51, -56)), max(0.12, span * 0.002)))
+            else:
+                peaks.append((low + span * fallback_ratio, random.choice((-48, -51, -56)), max(0.12, span * 0.002)))
         transient_spikes = [
             (
-                random.uniform(472.0, 558.0),
+                random.uniform(low + span * 0.02, high - span * 0.02),
                 random.uniform(-74.0, -60.0),
-                random.uniform(0.035, 0.09),
+                random.uniform(max(0.035, span * 0.0004), max(0.09, span * 0.001)),
             )
             for _ in range(5)
         ]
@@ -2357,6 +2560,7 @@ class RFBridgeWindow:
         self.connected = False
         self.scan_mismatch_count = 0
         self.update_connection_state(False, status_text)
+        self.render_mic_markers()
         if was_connected:
             self.log("Disconnected")
 
@@ -2434,26 +2638,40 @@ class RFBridgeWindow:
         if connected:
             self.force_disconnected_actions = False
         self.connected = connected
-        self.status_dot.setStyleSheet(f"color: {self.theme['connected'] if connected else self.theme['disconnected']};")
         status_text = text or ("Connected" if connected else "Disconnected")
+        is_connecting = "connecting" in status_text.lower() or "reconnecting" in status_text.lower()
+        if is_connecting:
+            status_color = "#d0a000"
+        elif connected:
+            status_color = self.theme["connected"]
+        else:
+            status_color = self.theme["disconnected"]
+        self.status_dot.setStyleSheet(f"color: {status_color};")
         self.connection_status.setText(status_text)
+        self.connection_status.setStyleSheet(
+            f"background: {self.theme['hover_bg']}; color: {status_color}; "
+            f"border: 1px solid {status_color}; border-radius: 12px; "
+            "padding: 3px 10px; font-weight: bold; font-size: 14px;"
+        )
         self.sidebar_connection_label.setText(status_text)
-        device_name = "Demo Mode" if self.demo_mode else (self.device_name if connected else "—")
+        device_name = "Demo Mode" if (self.demo_mode or self.demo_connect_pending) else (self.device_name if connected else "—")
         self.sidebar_device_label.setText(f"Device: {device_name}")
-        show_disconnect = (connected or self.worker is not None) and not self.force_disconnected_actions
+        show_disconnect = (connected or self.worker is not None or self.demo_connect_pending) and not self.force_disconnected_actions
+        controls_busy = connected or self.worker is not None or self.demo_connect_pending
         self.connect_button.setVisible(not show_disconnect)
         self.refresh_ports_button.setVisible(not show_disconnect)
         self.disconnect_button.setVisible(show_disconnect)
-        self.connect_button.setEnabled(not connected and self.worker is None)
+        self.connect_button.setEnabled(not controls_busy)
         self.disconnect_button.setEnabled(show_disconnect)
-        self.refresh_ports_button.setEnabled(not connected and self.worker is None)
-        self.port_combo.setEnabled(not connected and self.worker is None)
-        if not connected:
+        self.refresh_ports_button.setEnabled(not controls_busy)
+        self.port_combo.setEnabled(not controls_busy)
+        if not connected and not self.demo_connect_pending:
             self.device_info_label.setText("Device: —\nRange: —")
             self.disconnect_button.setText("Disconnect")
             if self.worker is None and not self.demo_mode:
                 self.update_frequency_range_labels([])
                 self.update_frequency_bounds([])
+                self.render_mic_markers()
         self.update_status()
 
     def update_frequency_range_labels(self, freqs_mhz=None):
@@ -2764,6 +2982,8 @@ class RFBridgeWindow:
         seconds = next_save % 60
         if self.capture_mode and self.loaded_capture:
             freeze_label = "Capture"
+        elif self.demo_connect_pending:
+            freeze_label = "Demo Connecting"
         elif self.demo_mode:
             freeze_label = "Demo"
         else:
@@ -2771,7 +2991,7 @@ class RFBridgeWindow:
         device_label = self.selected_port or "not connected"
         overlay_count = sum(1 for capture in self.capture_overlays if capture.get("visible", True))
         auto_label = "on" if self.auto_trace_enabled else "off"
-        if self.demo_mode:
+        if self.demo_mode or self.demo_connect_pending:
             self.status_label.setText(
                 f"Mode: {freeze_label}   |   CSV: disabled   |   "
                 f"Refresh: {format_seconds(self.refresh_seconds)}s   |   Overlays: {overlay_count}   |   Auto: {auto_label}"
