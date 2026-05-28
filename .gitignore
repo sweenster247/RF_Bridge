@@ -2,3 +2,4 @@ build/
 dist/
 wwb_scans/
 wwbscans/
+scripts/publish_release.sh
