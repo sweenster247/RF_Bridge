@@ -70,6 +70,11 @@ THEMES = {
         "axis_text": "#dddddd",
         "marker": "#666666",
         "grid_alpha": 0.25,
+        "live_trace": "#00ff99",
+        "hover_line": "#00ff99",
+        "interactive_hover_bg": "#333333",
+        "interactive_hover_border": "#666666",
+        "sidebar_logo": "sidebar-logo-dark.png",
     },
     "Light": {
         "window_bg": "#eef1f4",
@@ -89,10 +94,15 @@ THEMES = {
         "disconnected": "#b4232c",
         "connected": "#087443",
         "connecting": "#9b6b00",
-        "axis": "#76818d",
-        "axis_text": "#2e3742",
-        "marker": "#7b8794",
-        "grid_alpha": 0.18,
+        "axis": "#606b77",
+        "axis_text": "#202a35",
+        "marker": "#6d7782",
+        "grid_alpha": 0.22,
+        "live_trace": "#0868a8",
+        "hover_line": "#054f80",
+        "interactive_hover_bg": "#f1f5f9",
+        "interactive_hover_border": "#9facba",
+        "sidebar_logo": "sidebar-logo-light.png",
     },
 }
 
@@ -440,7 +450,7 @@ class DownwardComboBoxFactory:
 class RFBridgeWindow:
     def __init__(self, output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None, debug_serial=False):
         from PySide6.QtCore import Qt, QThread, Signal, QMetaObject, Q_ARG, QTimer, QSize
-        from PySide6.QtGui import QAction, QIcon, QPixmap
+        from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
         from PySide6.QtWidgets import (
             QApplication,
             QCheckBox,
@@ -455,6 +465,7 @@ class RFBridgeWindow:
             QPushButton,
             QSizePolicy,
             QTextEdit,
+            QToolButton,
             QVBoxLayout,
             QWidget,
         )
@@ -590,7 +601,7 @@ class RFBridgeWindow:
         self.sidebar_logo = QLabel()
         self.sidebar_logo.setObjectName("sidebarLogo")
         self.sidebar_logo.setFixedSize(145, 145)
-        logo_path = self.asset_path("sidebar-logo-dark.png")
+        logo_path = self.asset_path(self.theme.get("sidebar_logo", "sidebar-logo-dark.png"))
         if os.path.exists(logo_path):
             logo_pixmap = QPixmap(logo_path)
             if not logo_pixmap.isNull():
@@ -716,8 +727,10 @@ class RFBridgeWindow:
         overlay_layout.setSpacing(8)
 
         overlay_header = QHBoxLayout()
-        self.overlay_icon = QLabel("▱")
+        self.overlay_icon = QLabel()
         self.overlay_icon.setObjectName("overlayHeaderIcon")
+        self.overlay_icon.setFixedSize(34, 34)
+        self.overlay_icon.setAlignment(self.Qt.AlignCenter)
         self.overlay_title = QLabel("CAPTURE OVERLAYS")
         self.overlay_title.setObjectName("overlayTitle")
         self.overlay_subtitle = QLabel("Load previously saved scans to overlay on the live RF data.")
@@ -780,6 +793,13 @@ class RFBridgeWindow:
         self.plot.setLabel("left", "dBm")
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
         self.plot.getPlotItem().setMenuEnabled(False)
+        # Hide pyqtgraph's small auto-range button in normal use; it is
+        # visually distracting and can reintroduce unwanted autoscale behavior.
+        if not self.debug_serial:
+            try:
+                self.plot.getPlotItem().hideButtons()
+            except Exception:
+                pass
         self.lock_plot_axes()
 
         axis_pen = pg.mkPen(self.theme["axis"])
@@ -789,13 +809,13 @@ class RFBridgeWindow:
         self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
         self.plot.getAxis("left").setTickSpacing(major=10, minor=5)
 
-        self.live_curve = self.plot.plot([], [], pen=pg.mkPen("#00ff99", width=2), name="Live")
+        self.live_curve = self.plot.plot([], [], pen=pg.mkPen(self.theme["live_trace"], width=2), name="Live")
         self.peak_curve = self.plot.plot([], [], pen=pg.mkPen("#ff3333", width=1.5), name="Peak Hold")
         self.threshold_85 = pg.InfiniteLine(pos=-85, angle=0, pen=pg.mkPen("#ffaa00", width=1, style=self.Qt.DashLine))
         self.threshold_60 = pg.InfiniteLine(pos=-60, angle=0, pen=pg.mkPen("#ff00aa", width=1, style=self.Qt.DashLine))
         self.plot.addItem(self.threshold_85, ignoreBounds=True)
         self.plot.addItem(self.threshold_60, ignoreBounds=True)
-        self.cursor_line = pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen("#00ff99", width=1))
+        self.cursor_line = pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen(self.theme["hover_line"], width=1))
         self.cursor_line.setVisible(False)
         self.plot.addItem(self.cursor_line, ignoreBounds=True)
         self.low_freq_label = pg.TextItem("", color=self.theme["axis_text"], anchor=(0, 1))
@@ -878,9 +898,13 @@ class RFBridgeWindow:
         content_layout.addWidget(self.plot, stretch=1)
         content_layout.addWidget(side_panel)
 
-        self.log_toggle_button = QPushButton("Hide Log")
-        self.log_toggle_button.setObjectName("secondaryButton")
+        self.log_toggle_button = QToolButton()
+        self.log_toggle_button.setObjectName("logToggleButton")
+        self.log_toggle_button.setText("▾ Log")
         self.log_toggle_button.setToolTip("Collapse or expand the app log")
+        self.log_toggle_button.setCheckable(True)
+        self.log_toggle_button.setChecked(True)
+        self.log_toggle_button.setAutoRaise(True)
         self.log_box = QTextEdit()
         self.log_box.setObjectName("logBox")
         self.log_box.setReadOnly(True)
@@ -895,7 +919,11 @@ class RFBridgeWindow:
 
         root_layout.addLayout(top_layout)
         root_layout.addLayout(content_layout, stretch=2)
-        root_layout.addWidget(self.log_toggle_button)
+        log_header_layout = QHBoxLayout()
+        log_header_layout.setContentsMargins(0, 0, 0, 0)
+        log_header_layout.addStretch(1)
+        log_header_layout.addWidget(self.log_toggle_button)
+        root_layout.addLayout(log_header_layout)
         root_layout.addWidget(self.log_box)
         root_layout.addWidget(self.status_label)
         self.window.setCentralWidget(root)
@@ -970,6 +998,41 @@ class RFBridgeWindow:
                 return candidate
         return os.path.abspath(candidates[-1])
 
+    def update_sidebar_logo(self):
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QPixmap
+
+        logo_path = self.asset_path(self.theme.get("sidebar_logo", "sidebar-logo-dark.png"))
+        if os.path.exists(logo_path):
+            logo_pixmap = QPixmap(logo_path)
+            if not logo_pixmap.isNull():
+                self.sidebar_logo.setPixmap(
+                    logo_pixmap.scaled(
+                        QSize(145, 145),
+                        self.Qt.KeepAspectRatio,
+                        self.Qt.SmoothTransformation,
+                    )
+                )
+
+    def update_capture_overlay_icon(self):
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QPixmap
+
+        icon_name = "capture-overlays-light.png" if self.theme_name == "Light" else "capture-overlays-dark.png"
+        icon_path = self.asset_path(icon_name)
+        if os.path.exists(icon_path):
+            icon_pixmap = QPixmap(icon_path)
+            if not icon_pixmap.isNull():
+                self.overlay_icon.setPixmap(
+                    icon_pixmap.scaled(
+                        QSize(24, 24),
+                        self.Qt.KeepAspectRatio,
+                        self.Qt.SmoothTransformation,
+                    )
+                )
+                return
+        self.overlay_icon.setText("≋")
+
     def stylesheet(self):
         t = self.theme
         return f"""
@@ -987,7 +1050,7 @@ class RFBridgeWindow:
         QLabel#connectionStatus {{ font-weight: bold; background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 12px; padding: 3px 10px; font-size: 14px; }}
         QLabel#deviceInfoLabel {{ color: {t['muted_text']}; background: transparent; font-size: 12px; padding-top: 2px; }}
         QLabel#deviceNoticeLabel {{ color: {t['disconnected']}; background: transparent; font-size: 12px; padding-top: 2px; }}
-        QLabel#overlayHeaderIcon {{ color: {t['text']}; font-size: 26px; font-weight: bold; padding-right: 4px; background: transparent; }}
+        QLabel#overlayHeaderIcon {{ color: {t['text']}; padding: 0px; margin-right: 4px; background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 7px; }}
         QLabel#overlayTitle {{ font-weight: bold; font-family: Menlo, Monaco, Consolas, monospace; font-size: 15px; background: transparent; }}
         QLabel#overlaySubtitle {{ color: {t['muted_text']}; font-size: 12px; background: transparent; }}
         QLabel#overlayEmptyLabel {{ color: {t['text']}; font-size: 16px; font-weight: bold; background: transparent; padding: 2px; }}
@@ -998,14 +1061,21 @@ class RFBridgeWindow:
         QLabel#sidebarConnectionLabel {{ color: {t['text']}; font-weight: bold; font-size: 15px; background: transparent; padding: 8px 12px 0px 12px; }}
         QLabel#sidebarDeviceLabel {{ color: {t['muted_text']}; font-size: 13px; background: transparent; padding: 0px 12px 8px 12px; }}
         QPushButton#sidebarButton {{ text-align: left; border: 0px; background: transparent; color: {t['text']}; padding: 10px 12px; border-radius: 7px; font-size: 15px; }}
-        QPushButton#sidebarButton:hover {{ background: {t['button_hover']}; }}
+        QPushButton#sidebarButton:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; }}
         QPushButton#sidebarButton:disabled {{ color: {t['connected']}; background: {t['hover_bg']}; }}
         QTextEdit#logBox {{ background: {t['log_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding: 6px; }}
-        QPushButton, QComboBox, QLineEdit {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
+        QToolButton#logToggleButton {{ background: transparent; color: {t['muted_text']}; border: 1px solid transparent; border-radius: 6px; font-size: 12px; padding: 2px 8px; min-height: 22px; }}
+        QToolButton#logToggleButton:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; color: {t['text']}; }}
+        QPushButton, QComboBox, QLineEdit, QDoubleSpinBox {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
         QPushButton#secondaryButton {{ color: {t['muted_text']}; font-size: 12px; min-width: 84px; max-width: 112px; padding: 1px 8px; }}
-        QPushButton:hover, QComboBox:hover {{ background: {t['button_hover']}; }}
+        QPushButton:hover, QComboBox:hover, QLineEdit:hover, QDoubleSpinBox:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; }}
+        QCheckBox#autoTraceCheckbox {{ background: transparent; color: {t['text']}; spacing: 8px; padding: 4px 0px; min-height: 28px; }}
+        QCheckBox#autoTraceCheckbox::indicator {{ width: 18px; height: 18px; }}
         QPushButton:pressed {{ background: {t['button_pressed']}; }}
         QPushButton:disabled {{ color: {t['button_disabled_text']}; background: {t['button_disabled_bg']}; }}
+        QComboBox QAbstractItemView {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; selection-background-color: {t['interactive_hover_bg']}; selection-color: {t['text']}; outline: 0; }}
+        QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ background: {t['button_bg']}; border: 0px; width: 16px; }}
+        QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{ background: {t['interactive_hover_bg']}; }}
         """
 
     def lock_plot_axes(self, preserve_x=False):
@@ -1208,7 +1278,12 @@ class RFBridgeWindow:
         self.plot.getAxis("bottom").setTextPen(self.theme["axis_text"])
         self.plot.getAxis("left").setTextPen(self.theme["axis_text"])
         self.plot.setTitle(f"RF Bridge - {self.gig_slug}", color=self.theme["text"], size="16pt")
+        self.plot.setLabel("bottom", "Frequency", units="MHz", color=self.theme["axis_text"])
         self.plot.setLabel("left", "dBm", color=self.theme["axis_text"])
+        self.live_curve.setPen(self.pg.mkPen(self.theme["live_trace"], width=2))
+        self.cursor_line.setPen(self.pg.mkPen(self.theme["hover_line"], width=1))
+        self.update_sidebar_logo()
+        self.update_capture_overlay_icon()
         self.update_frequency_range_labels()
         self.update_connection_state(self.connected, self.connection_status.text())
         self.render_mic_markers()
@@ -1284,6 +1359,10 @@ class RFBridgeWindow:
     def add_auto_trace_overlay(self, freqs_mhz, dbm, now=None):
         if now is None:
             now = time.time()
+        if not freqs_mhz or not dbm:
+            return False
+        if len(freqs_mhz) != len(dbm):
+            return False
         capture = {
             "name": f"Auto Trace {time_12h()}",
             "path": None,
@@ -1311,13 +1390,21 @@ class RFBridgeWindow:
         self.render_capture_overlays()
         self.rebuild_overlay_menu()
         self.log(f"Auto trace overlay added: {capture['name']}")
+        self.update_status()
+        return True
 
 
     def next_overlay_color(self):
-        colors = [
-            "#33aaff", "#ffaa00", "#cc66ff", "#eeeeee", "#ff3333", "#00ff99",
-            "#00e5ff", "#ff7a00", "#ff66cc", "#7cff00", "#b388ff", "#a0a0a0",
-        ]
+        if self.theme_name == "Light":
+            colors = [
+                "#005f99", "#b85c00", "#7a3db8", "#b4232c", "#087443", "#0f766e",
+                "#1d4ed8", "#9a3412", "#be185d", "#4d7c0f", "#6d28d9", "#475569",
+            ]
+        else:
+            colors = [
+                "#33aaff", "#ffaa00", "#cc66ff", "#eeeeee", "#ff3333", "#00ff99",
+                "#00e5ff", "#ff7a00", "#ff66cc", "#7cff00", "#b388ff", "#a0a0a0",
+            ]
         color = colors[self.overlay_color_index % len(colors)]
         self.overlay_color_index += 1
         return color
@@ -1709,9 +1796,19 @@ class RFBridgeWindow:
     def open_scan_folder(self):
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
-        os.makedirs(self.output_dir, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(self.output_dir))
-        self.log("Opened scan folder")
+
+        folder = os.path.abspath(os.path.expanduser(self.output_dir))
+        os.makedirs(folder, exist_ok=True)
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+        if not opened and platform.system() == "Darwin":
+            try:
+                subprocess.run(["open", folder], check=False)
+                opened = True
+            except Exception:
+                opened = False
+        if not opened:
+            webbrowser.open(f"file://{folder}")
+        self.log(f"Opened scan folder: {folder}")
 
     def latest_csv_path(self):
         return os.path.join(self.output_dir, "latest_scan.csv")
@@ -2059,6 +2156,7 @@ class RFBridgeWindow:
         dialog.setWindowTitle("Edit Mic Marker")
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
         name = QLineEdit(str(marker.get("name", "")))
         frequency = QDoubleSpinBox()
@@ -2401,25 +2499,27 @@ class RFBridgeWindow:
             QLabel,
             QLineEdit,
             QPushButton,
+            QSizePolicy,
             QVBoxLayout,
         )
 
         dialog = QDialog(self.window)
         dialog.setWindowTitle("RF Bridge Preferences")
-        dialog.setMinimumWidth(520)
+        dialog.setMinimumWidth(640)
 
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
-        appearance_combo = QComboBox()
+        appearance_combo = DownwardComboBoxFactory.create(QComboBox)
         appearance_combo.addItems(APPEARANCE_OPTIONS)
         appearance_combo.setCurrentText(self.appearance if self.appearance in APPEARANCE_OPTIONS else "Dark")
 
-        refresh_combo = QComboBox()
+        refresh_combo = DownwardComboBoxFactory.create(QComboBox)
         for value in REFRESH_MODES:
             refresh_combo.addItem(f"{format_seconds(value)} seconds", value)
 
-        filename_time_combo = QComboBox()
+        filename_time_combo = DownwardComboBoxFactory.create(QComboBox)
         filename_time_combo.addItem("12-hour time, e.g. 09-15PM", "12-hour")
         filename_time_combo.addItem("24-hour time, e.g. 21-15", "24-hour")
         filename_time_index = filename_time_combo.findData(self.filename_time_format)
@@ -2439,8 +2539,13 @@ class RFBridgeWindow:
         storage_row.addWidget(storage_edit, stretch=1)
         storage_row.addWidget(browse_button)
 
-        auto_trace_checkbox = QCheckBox("Add current live trace to overlays automatically")
+        auto_trace_checkbox = QCheckBox("Add live trace to overlays automatically")
+        auto_trace_checkbox.setObjectName("autoTraceCheckbox")
+        auto_trace_checkbox.setToolTip("Capture the current live trace immediately when enabled, then continue at the selected interval.")
         auto_trace_checkbox.setChecked(self.auto_trace_enabled)
+        auto_trace_checkbox.setMinimumHeight(28)
+        auto_trace_checkbox.setMinimumWidth(260)
+        auto_trace_checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         auto_trace_minutes = QDoubleSpinBox()
         auto_trace_minutes.setRange(1.0, 120.0)
         auto_trace_minutes.setDecimals(1)
@@ -2486,8 +2591,11 @@ class RFBridgeWindow:
         self.appearance = appearance_combo.currentText()
         self.settings.set_appearance(self.appearance)
         self.settings.set_storage_root(storage_edit.text().strip() or self.settings.default_storage_root())
+        was_auto_trace_enabled = self.auto_trace_enabled
         self.auto_trace_enabled = auto_trace_checkbox.isChecked()
         self.auto_trace_minutes = float(auto_trace_minutes.value())
+        if self.auto_trace_enabled and not was_auto_trace_enabled:
+            self.last_auto_trace_time = None
         self.filename_time_format = filename_time_combo.currentData() or "12-hour"
         self.settings.set("auto_trace_enabled", self.auto_trace_enabled)
         self.settings.set("auto_trace_minutes", self.auto_trace_minutes)
@@ -2509,7 +2617,8 @@ class RFBridgeWindow:
     def toggle_log_panel(self):
         self.log_collapsed = not self.log_collapsed
         self.log_box.setVisible(not self.log_collapsed)
-        self.log_toggle_button.setText("Show Log" if self.log_collapsed else "Hide Log")
+        self.log_toggle_button.setChecked(not self.log_collapsed)
+        self.log_toggle_button.setText("▸ Log" if self.log_collapsed else "▾ Log")
 
     def toggle_compact_summary(self):
         self.summary_compact = not self.summary_compact
@@ -2677,6 +2786,7 @@ class RFBridgeWindow:
         intro = QLabel("Choose the simulated RF range before connecting to Demo Mode.")
         intro.setWordWrap(True)
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
         preset_combo = QComboBox()
         for label, low, high in DEMO_RANGE_PRESETS:
@@ -3248,9 +3358,10 @@ class RFBridgeWindow:
                 self.render_scan(dbm)
         now = time.time()
         if self.auto_trace_enabled and not self.capture_mode:
-            if not self.last_auto_trace_time:
-                self.last_auto_trace_time = now
-            elif now - self.last_auto_trace_time >= self.auto_trace_minutes * 60:
+            if (
+                not self.last_auto_trace_time
+                or now - self.last_auto_trace_time >= self.auto_trace_minutes * 60
+            ):
                 self.add_auto_trace_overlay(live_freqs, dbm, now=now)
         if now - self.last_save_time >= SCAN_INTERVAL_SECONDS:
             filename, latest_filename = save_wwb_csv(

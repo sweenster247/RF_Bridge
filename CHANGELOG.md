@@ -1,16 +1,47 @@
 # Changelog
 
-## v1.9.9.1
+## v1.9.9.7
+- Improved the Preferences dialog layout so the Auto Trace checkbox remains visible on macOS.
+- Shortened the Auto Trace checkbox label and gave the control explicit macOS-friendly sizing.
+- Hardened saved boolean preference parsing so stale Qt values do not accidentally enable Auto Trace.
+- Removed the immediate auto-trace capture side effect when enabling the preference; captures now wait for the selected interval.
 
-- Combined startup Session Name and Storage Location prompts into one app launch dialog.
-- Fixed update-check dialog handling so GitHub results are routed back to the UI thread before showing messages.
-- Made update checks intentionally ignore GitHub prereleases and compare against the latest stable release.
-- Added Help menu actions for exporting diagnostics and copying debug info.
-- Added File menu actions to open or reveal `latest_scan.csv`.
-- Added scan health details for last scan age, reconnect attempts, mismatch count, and active port.
-- Added a collapsible app log and compact RF Summary toggle.
-- Added a release checklist script that compiles code, checks version metadata, prints expected artifacts, and shows the latest changelog section.
-- Refined Demo Mode custom range controls and softened marker label fills in Light Mode.
+## v1.9.9.6
+
+- Added an immediate auto trace overlay capture when automatic overlays are enabled.
+- Kept the configured auto trace interval behavior after the initial capture.
+- Replaced the Capture Overlays header glyph with a themed spectrum-overlay icon asset.
+- Added graceful no-op handling when auto trace is enabled before live scan data is available.
+
+## v1.9.9.5
+
+- Reworked the startup dialog into the cleaner Option C layout.
+- Renamed Storage Location to Save Captures To and placed the selected path on its own selectable line.
+- Kept Browse as the explicit control for changing the base save location.
+- Made Output Folder a read-only live preview that updates with the session name.
+- Normalized stored save roots to prevent accidental `wwb_scans/wwb_scans` output paths.
+
+## v1.9.9.4
+
+- Refined the Capture Overlays header icon with a cleaner stacked-layers treatment.
+- Simplified the startup Storage Location row by removing the editable path box and keeping Browse as the explicit way to change the storage root.
+- Widened the startup Output Folder field so longer generated paths are easier to read as the session name updates.
+
+## v1.9.9.3
+- Smoothed the light-mode sidebar logo by using a cleaner transparent app-icon mask.
+- Updated capture overlay styling with a stacked-layers header icon and light-mode-safe overlay colors.
+- Styled the auto trace interval spinner for light mode to avoid the native black control line.
+- Made Preferences dropdowns open below their fields like the device selector.
+- Fixed Open Scan Folder by opening an absolute folder path with a macOS fallback.
+
+## v1.9.9.2
+
+- Refined light-mode sidebar logo rendering with transparent rounded corners so it no longer reads as a square block.
+- Replaced the Capture Overlays header icon with a stacked-layers style mark.
+- Moved the app log collapse control to a compact header toggle so the Top 8/RF Summary area has more room.
+- Hid pyqtgraph's auto-range "A" button during normal launches. It remains available when launching with serial debug enabled.
+- Improved the packaged-app startup dialog with a live-updating full output folder path and Browse support for changing the storage location.
+
 
 ## v1.9.9
 

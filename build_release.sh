@@ -15,6 +15,8 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/private/tmp/rf_bridge_pycache}"
+
 VERSION=$(python3 - <<'PY'
 from rf_bridge.version import __version__
 print(__version__)

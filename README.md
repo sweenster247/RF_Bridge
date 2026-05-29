@@ -22,16 +22,12 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
-## What’s New in v1.9.9.1
+## What’s New in v1.9.9.7
+- Improved the Preferences dialog so the Auto Trace checkbox remains visible and properly sized on macOS.
 
-- Combined startup Session Name and Storage Location into one launch dialog.
-- Fixed update-check dialog handling and made checks compare against the latest stable GitHub release.
-- Added diagnostics export and Copy Debug Info actions under Help.
-- Added Open Latest CSV and Reveal Latest CSV actions under File.
-- Added scan health details for last scan age, reconnect attempts, mismatch count, and active port.
-- Added a collapsible app log and compact RF Summary toggle.
-- Added a release checklist script for compile, version, artifact-name, and changelog review.
-- Refined Demo Mode custom range controls and Light Mode marker label fills.
+- Auto trace overlays now capture immediately when enabled, then continue on the configured interval.
+- Capture Overlays now uses a themed spectrum-overlay icon instead of the previous text glyph.
+- Auto trace overlay capture now no-ops safely until live scan data is available.
 
 ## What’s New in v1.9.9
 
@@ -180,8 +176,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.9.1-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.9.1-macOS-arm64.zip
+dist/releases/RF-Bridge-v1.9.9.7-macOS-arm64.dmg
+dist/releases/RF-Bridge-v1.9.9.7-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

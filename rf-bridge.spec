@@ -99,8 +99,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleDisplayName': 'RF Bridge',
         'CFBundleName': 'RF Bridge',
-        'CFBundleShortVersionString': '1.9.9.1',
-        'CFBundleVersion': '1.9.9.1',
+        'CFBundleShortVersionString': '1.9.9.7',
+        'CFBundleVersion': '1.9.9.7',
         'NSHighResolutionCapable': True,
     },
 )

@@ -127,6 +127,16 @@ def default_app_storage_root():
     )
 
 
+
+
+def normalize_storage_root(path):
+    """Return the RF Bridge base storage root, not the nested wwb_scans folder."""
+    path = path or default_app_storage_root()
+    normalized = os.path.normpath(os.path.expanduser(path))
+    if os.path.basename(normalized) == "wwb_scans":
+        return os.path.dirname(normalized)
+    return normalized
+
 def prompt_storage_root_gui(default_root=None):
     """Prompt for the app scan storage root using Qt.
 
@@ -139,7 +149,7 @@ def prompt_storage_root_gui(default_root=None):
     # See prompt_gig_name_gui: startup dialogs appear before the main
     # window, so prevent Qt from treating dialog close as application exit.
     app.setQuitOnLastWindowClosed(False)
-    default_root = default_root or default_app_storage_root()
+    default_root = normalize_storage_root(default_root)
     os.makedirs(default_root, exist_ok=True)
 
     selected = QFileDialog.getExistingDirectory(
@@ -148,20 +158,20 @@ def prompt_storage_root_gui(default_root=None):
         default_root,
     )
 
-    selected = selected or default_root
+    selected = normalize_storage_root(selected or default_root)
     AppSettings().set_storage_root(selected)
     return selected
 
 
 def prompt_session_setup_gui(default_name="RF Bridge Scan", default_root=None):
     """Prompt for the session name and storage root in one startup dialog."""
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
         QApplication,
         QDialog,
         QDialogButtonBox,
         QFileDialog,
-        QFormLayout,
-        QHBoxLayout,
+        QLabel,
         QLineEdit,
         QPushButton,
         QVBoxLayout,
@@ -169,46 +179,79 @@ def prompt_session_setup_gui(default_name="RF Bridge Scan", default_root=None):
 
     app = QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)
-    default_root = default_root or default_app_storage_root()
+    default_root = normalize_storage_root(default_root)
     os.makedirs(default_root, exist_ok=True)
 
     dialog = QDialog()
     dialog.setWindowTitle("RF Bridge")
-    dialog.setMinimumWidth(560)
+    dialog.setMinimumWidth(760)
 
     layout = QVBoxLayout(dialog)
-    form = QFormLayout()
+    layout.setSpacing(14)
+    intro = QLabel("Name this RF scan session and choose where RF Bridge should save its captures.")
+    intro.setWordWrap(True)
+    layout.addWidget(intro)
+
+    session_label = QLabel("Session Name")
     session_edit = QLineEdit("")
-    storage_edit = QLineEdit(default_root)
+    session_edit.setPlaceholderText(default_name)
+    session_edit.setMinimumWidth(360)
+    layout.addWidget(session_label)
+    layout.addWidget(session_edit)
+
+    storage_root_value = {"path": default_root}
+    save_to_label = QLabel("Save Captures To")
+    storage_path_label = QLabel(default_root)
+    storage_path_label.setWordWrap(True)
+    storage_path_label.setTextInteractionFlags(storage_path_label.textInteractionFlags() | Qt.TextSelectableByMouse)
     browse_button = QPushButton("Browse...")
-    storage_row = QHBoxLayout()
-    storage_row.addWidget(storage_edit, stretch=1)
-    storage_row.addWidget(browse_button)
+    browse_button.setMaximumWidth(120)
+    layout.addWidget(save_to_label)
+    layout.addWidget(storage_path_label)
+    layout.addWidget(browse_button, alignment=Qt.AlignLeft)
+
+    output_label = QLabel("Output Folder")
+    output_path_edit = QLineEdit()
+    output_path_edit.setReadOnly(True)
+    output_path_edit.setMinimumWidth(720)
+    output_path_edit.setToolTip("This path updates as the session name or storage location changes.")
+    layout.addWidget(output_label)
+    layout.addWidget(output_path_edit)
+
+    def current_session_name():
+        return session_edit.text().strip() or default_name
+
+    def update_output_path():
+        storage_root = storage_root_value["path"] or default_root
+        storage_path_label.setText(storage_root)
+        output_path_edit.setText(
+            os.path.join(storage_root, "wwb_scans", safe_name(current_session_name()))
+        )
 
     def choose_folder():
         selected = QFileDialog.getExistingDirectory(
             dialog,
             "Choose RF Bridge Storage Location",
-            storage_edit.text() or default_root,
+            storage_root_value["path"] or default_root,
         )
         if selected:
-            storage_edit.setText(selected)
+            storage_root_value["path"] = normalize_storage_root(selected)
+            update_output_path()
 
     browse_button.clicked.connect(choose_folder)
-    form.addRow("Session Name", session_edit)
-    form.addRow("Storage Location", storage_row)
+    session_edit.textChanged.connect(update_output_path)
+    update_output_path()
 
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
-    layout.addLayout(form)
     layout.addWidget(buttons)
 
     if dialog.exec() != QDialog.Accepted:
         return None, None
 
     session_name = session_edit.text().strip() or default_name
-    storage_root = storage_edit.text().strip() or default_root
+    storage_root = normalize_storage_root(storage_root_value["path"] or default_root)
     AppSettings().set_storage_root(storage_root)
     return session_name, storage_root
 
@@ -229,7 +272,7 @@ def resolve_output_dir(args, gig_slug, use_app_mode=False):
 
     if use_app_mode:
         settings = AppSettings()
-        storage_root = prompt_storage_root_gui(settings.get_storage_root())
+        storage_root = prompt_storage_root_gui(normalize_storage_root(settings.get_storage_root()))
         return os.path.join(
             storage_root,
             "wwb_scans",
@@ -260,7 +303,7 @@ def main(argv=None):
     storage_root = None
     if use_app_mode and not args.gig and not args.output_dir:
         settings = AppSettings()
-        gig_name, storage_root = prompt_session_setup_gui(default_root=settings.get_storage_root())
+        gig_name, storage_root = prompt_session_setup_gui(default_root=normalize_storage_root(settings.get_storage_root()))
     else:
         gig_name = resolve_gig_name(args, use_app_mode)
     if gig_name is None:

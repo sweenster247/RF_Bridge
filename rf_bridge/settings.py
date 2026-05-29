@@ -18,9 +18,15 @@ class AppSettings:
         value = self.get(key, default)
         if isinstance(value, bool):
             return value
+        if isinstance(value, int):
+            return value == 1
         if isinstance(value, str):
-            return value.lower() in {"1", "true", "yes", "on"}
-        return bool(value)
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off", ""}:
+                return False
+        return bool(default)
 
     def get_float(self, key, default):
         value = self.get(key, default)
