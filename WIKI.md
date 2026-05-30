@@ -33,6 +33,9 @@ After the first launch, macOS should remember the app.
 
 RF Bridge reads frequency and amplitude data from the tinySA, displays it on the live RF graph, and periodically writes Wireless Workbench-compatible CSV files.
 
+- RF Bridge adapts down to compact side-by-side and quarter-size windows.
+- In compact layouts, the left navigation rail and Capture Overlays panel hide automatically so the graph stays usable.
+- The app log collapses automatically in compact layouts and can be reopened with the Log toggle.
 - Scroll vertically / trackpad wheel to zoom the frequency axis.
 - Scroll horizontally / trackpad sideways to pan within the active scan range.
 - Click-drag the RF graph to draw a zoom box around a selected frequency area.

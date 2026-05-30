@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.0.0
+
+- Added responsive layout behavior for side-by-side and quarter-size window use.
+- Lowered the minimum app window to 820x560 so RF Bridge can live beside scripts, Wireless Workbench, or notes.
+- Hid the left navigation rail and Capture Overlays panel automatically in compact widths.
+- Tightened the connection panel and RF Summary panel at medium/compact breakpoints so the graph remains usable.
+- Replaced the right sidebar with a bottom compact control bar at narrow widths.
+- Added a compact RF summary line above the bottom controls for quarter-size layouts.
+- Made compact RF Top Hits scale by showing fewer hit pairs at tight widths.
+- Shortened tight-mode scan controls to icon-first buttons while preserving tooltips and normal labels at wider sizes.
+- Added a compact navigation menu so sidebar actions stay available when the left rail is hidden.
+- Condensed the compact connection card into a shorter utility strip so quarter-size windows keep more graph space.
+- Shortened tight-mode connection and status labels to prevent compact windows from feeling overloaded.
+- Consolidated the bottom status bar with full diagnostics retained in the hover tooltip.
+- Fixed compact connection state handling after tinySA disconnects and while canceling Demo Mode during its connecting state.
+- Simplified quarter-size disconnected connection controls by hiding the redundant status row and tightening the dropdown/button strip.
+- Removed the default Qt dropdown arrow from the compact navigation menu button so it shows only the menu icon/text.
+- Collapsed the app log automatically in compact layouts while keeping the Log toggle available.
+- Kept the RF graph, device connection controls, and scan controls visible in compact/quarter-size layouts.
+
 ## v1.9.9.7
 - Improved the Preferences dialog layout so the Auto Trace checkbox remains visible on macOS.
 - Shortened the Auto Trace checkbox label and gave the control explicit macOS-friendly sizing.

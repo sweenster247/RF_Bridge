@@ -116,6 +116,9 @@ DEMO_RANGE_PRESETS = [
     ("Legacy 470–560 MHz demo", 470.000, 560.000),
 ]
 DEMO_CONNECT_HOLD_MS = 2000
+RESPONSIVE_MEDIUM_WIDTH = 1200
+RESPONSIVE_COMPACT_WIDTH = 1040
+RESPONSIVE_TIGHT_WIDTH = 900
 DEMO_TV_CHANNEL_WIDTH_MHZ = 6.0
 
 # Fixed RF display range. Keep the graph from re-scaling when the tinySA
@@ -518,15 +521,22 @@ class RFBridgeWindow:
         self.log_history = deque(maxlen=200)
         self.log_collapsed = False
         self.summary_compact = False
+        self.responsive_mode = None
+        self.responsive_forced_log_collapse = False
+        self.connection_panel_in_side = False
+        self.controls_in_compact_bar = False
         self.auto_connect_in_progress = False
         self.force_disconnected_actions = False
         self.pending_disconnect_status = None
+        self.disconnect_pending = False
+        self.worker_disconnected = False
         self.shutting_down = False
         self.shutdown_started = False
         self.live_freqs_mhz = []
         self.connected = False
         self.worker_thread = None
         self.worker = None
+        self.retired_worker_threads = []
         self.auto_detect_thread = None
         self.auto_detect_worker = None
         self.update_check_thread = None
@@ -571,16 +581,17 @@ class RFBridgeWindow:
         self.app.setQuitOnLastWindowClosed(True)
         self.window = QMainWindow()
         self.window.closeEvent = self.handle_close_event
+        self.window.resizeEvent = self.handle_resize_event
         self.app.aboutToQuit.connect(self.shutdown)
         self.window.setWindowTitle("RF Bridge")
         self.window.resize(1640, 940)
-        self.window.setMinimumSize(1280, 760)
+        self.window.setMinimumSize(820, 560)
 
         saved_geometry = self.settings.get_bytes("window_geometry")
         if saved_geometry:
             self.window.restoreGeometry(saved_geometry)
-            if self.window.width() < 1280 or self.window.height() < 760:
-                self.window.resize(max(self.window.width(), 1280), max(self.window.height(), 760))
+            if self.window.width() < 820 or self.window.height() < 560:
+                self.window.resize(max(self.window.width(), 820), max(self.window.height(), 560))
 
         root = QWidget()
         shell_layout = QHBoxLayout(root)
@@ -588,6 +599,7 @@ class RFBridgeWindow:
         shell_layout.setSpacing(8)
 
         sidebar_panel = QFrame()
+        self.sidebar_panel = sidebar_panel
         sidebar_panel.setObjectName("navigationPanel")
         sidebar_panel.setFixedWidth(285)
         sidebar_layout = QVBoxLayout(sidebar_panel)
@@ -656,6 +668,35 @@ class RFBridgeWindow:
         sidebar_layout.addWidget(self.sidebar_connection_label)
         sidebar_layout.addWidget(self.sidebar_device_label)
 
+        self.compact_menu_button = QToolButton()
+        self.compact_menu_button.setObjectName("compactMenuButton")
+        self.compact_menu_button.setText("☰ Menu")
+        self.compact_menu_button.setToolTip("Open RF Bridge navigation")
+        try:
+            popup_mode = QToolButton.ToolButtonPopupMode.InstantPopup
+        except AttributeError:
+            popup_mode = QToolButton.InstantPopup
+        self.compact_menu_button.setPopupMode(popup_mode)
+        self.compact_menu_button.setFixedSize(86, 34)
+        self.compact_nav_menu = QMenu(self.compact_menu_button)
+        self.compact_rf_action = QAction("RF Scan", self.window)
+        self.compact_rf_action.setEnabled(False)
+        self.compact_nav_menu.addAction(self.compact_rf_action)
+        self.compact_nav_menu.addSeparator()
+        self.compact_mic_plot_action = QAction("Markers / Mic Plot", self.window)
+        self.compact_capture_action = QAction("Capture Overlays", self.window)
+        self.compact_preferences_action = QAction("Preferences", self.window)
+        self.compact_about_action = QAction("About / Help", self.window)
+        self.compact_nav_menu.addAction(self.compact_mic_plot_action)
+        self.compact_nav_menu.addAction(self.compact_capture_action)
+        self.compact_nav_menu.addAction(self.compact_preferences_action)
+        self.compact_nav_menu.addAction(self.compact_about_action)
+        self.compact_menu_button.setMenu(self.compact_nav_menu)
+        self.compact_menu_button.setVisible(False)
+        self.compact_top_spacer = QWidget()
+        self.compact_top_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.compact_top_spacer.setVisible(False)
+
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(8)
@@ -664,8 +705,10 @@ class RFBridgeWindow:
         shell_layout.addLayout(root_layout, stretch=1)
 
         connection_panel = QFrame()
+        self.connection_panel = connection_panel
         connection_panel.setObjectName("connectionPanel")
         connection_layout = QGridLayout(connection_panel)
+        self.connection_layout = connection_layout
         connection_layout.setContentsMargins(10, 8, 10, 8)
         connection_layout.setHorizontalSpacing(6)
         connection_layout.setVerticalSpacing(4)
@@ -678,8 +721,11 @@ class RFBridgeWindow:
         self.connection_status.setMinimumWidth(0)
         self.connection_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.port_combo = DownwardComboBoxFactory.create(QComboBox)
+        self.port_combo.setObjectName("portCombo")
         self.refresh_ports_button = QPushButton("Refresh")
+        self.refresh_ports_button.setObjectName("connectionButton")
         self.connect_button = QPushButton("Connect")
+        self.connect_button.setObjectName("connectionButton")
         self.disconnect_button = QPushButton("Disconnect")
         self.disconnect_button.setObjectName("secondaryButton")
         self.disconnect_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -771,11 +817,17 @@ class RFBridgeWindow:
         overlay_layout.addWidget(self.overlay_content_frame, stretch=1)
 
         top_layout = QHBoxLayout()
+        self.top_layout = top_layout
         top_layout.setSpacing(10)
+        top_layout.addWidget(self.compact_menu_button, stretch=0)
+        top_layout.addWidget(self.compact_top_spacer, stretch=1)
         top_layout.addWidget(self.overlay_panel, stretch=1)
         top_layout.addWidget(connection_panel, stretch=0)
+        top_layout.setAlignment(self.compact_menu_button, self.Qt.AlignLeft | self.Qt.AlignTop)
+        top_layout.setAlignment(connection_panel, self.Qt.AlignRight)
 
         content_layout = QHBoxLayout()
+        self.content_layout = content_layout
         content_layout.setSpacing(8)
 
         pg.setConfigOptions(antialias=True)
@@ -826,12 +878,14 @@ class RFBridgeWindow:
             self.plot.addItem(label, ignoreBounds=True)
 
         side_panel = QFrame()
+        self.side_panel = side_panel
         side_panel.setObjectName("sidePanel")
         # Give the RF summary / Top 8 readout a little more horizontal room.
         # This prevents clipping on macOS when labels, DPI scaling, or font
         # rendering make the right sidebar slightly tighter than expected.
         side_panel.setFixedWidth(360)
         side_layout = QVBoxLayout(side_panel)
+        self.side_layout = side_layout
         side_layout.setContentsMargins(12, 12, 12, 12)
         side_layout.setSpacing(10)
 
@@ -879,11 +933,13 @@ class RFBridgeWindow:
             button.setIconSize(QSize(22, 22))
 
         peak_row = QHBoxLayout()
+        self.peak_row = peak_row
         peak_row.setSpacing(8)
         peak_row.addWidget(self.peak_button)
         peak_row.addWidget(self.reset_button)
 
         live_row = QHBoxLayout()
+        self.live_row = live_row
         live_row.setSpacing(8)
         live_row.addWidget(self.refresh_button)
         live_row.addWidget(self.freeze_button)
@@ -897,6 +953,20 @@ class RFBridgeWindow:
 
         content_layout.addWidget(self.plot, stretch=1)
         content_layout.addWidget(side_panel)
+
+        self.compact_bottom_panel = QFrame()
+        self.compact_bottom_panel.setObjectName("compactBottomPanel")
+        compact_bottom_layout = QVBoxLayout(self.compact_bottom_panel)
+        compact_bottom_layout.setContentsMargins(10, 8, 10, 8)
+        compact_bottom_layout.setSpacing(8)
+        self.compact_summary_label = QLabel("RF Summary waiting")
+        self.compact_summary_label.setObjectName("compactSummaryLabel")
+        self.compact_summary_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
+        self.compact_button_row = QHBoxLayout()
+        self.compact_button_row.setSpacing(8)
+        compact_bottom_layout.addWidget(self.compact_summary_label)
+        compact_bottom_layout.addLayout(self.compact_button_row)
+        self.compact_bottom_panel.setVisible(False)
 
         self.log_toggle_button = QToolButton()
         self.log_toggle_button.setObjectName("logToggleButton")
@@ -919,6 +989,7 @@ class RFBridgeWindow:
 
         root_layout.addLayout(top_layout)
         root_layout.addLayout(content_layout, stretch=2)
+        root_layout.addWidget(self.compact_bottom_panel)
         log_header_layout = QHBoxLayout()
         log_header_layout.setContentsMargins(0, 0, 0, 0)
         log_header_layout.addStretch(1)
@@ -950,6 +1021,10 @@ class RFBridgeWindow:
         self.capture_nav_button.clicked.connect(self.open_capture_overlays)
         self.preferences_nav_button.clicked.connect(self.open_preferences)
         self.about_nav_button.clicked.connect(self.open_about)
+        self.compact_mic_plot_action.triggered.connect(self.open_mic_plot)
+        self.compact_capture_action.triggered.connect(self.open_capture_overlays)
+        self.compact_preferences_action.triggered.connect(self.open_preferences)
+        self.compact_about_action.triggered.connect(self.open_about)
         self.plot.scene().sigMouseMoved.connect(self.on_mouse_move)
         self.plot.scene().sigMouseClicked.connect(self.on_plot_mouse_click)
         self.plot.getViewBox().sigRangeChanged.connect(self.update_mic_marker_label_view_positions)
@@ -961,6 +1036,7 @@ class RFBridgeWindow:
         self.mic_markers = load_markers(self.settings)
         self.render_mic_markers()
         self.log(f"RF Bridge v{__version__} ready")
+        self.QTimer.singleShot(0, self.apply_responsive_layout)
 
         if selected_port:
             # Defer explicit manual-port connection until after the window is
@@ -1043,7 +1119,9 @@ class RFBridgeWindow:
         QFrame#overlayContentFrame {{ background: {t['window_bg']}; border: 1px dashed {t['border']}; border-radius: 8px; }}
         QFrame#navigationPanel {{ background: {t['side_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
         QFrame#sidePanel {{ background: {t['side_bg']}; border-left: 1px solid {t['border']}; }}
+        QFrame#compactBottomPanel {{ background: {t['side_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
         QLabel#summaryLabel, QLabel#hoverLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; }}
+        QLabel#compactSummaryLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; background: transparent; }}
         QLabel#hoverLabel {{ background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 8px; }}
         QLabel#statusLabel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }}
         QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; background: transparent; }}
@@ -1066,7 +1144,11 @@ class RFBridgeWindow:
         QTextEdit#logBox {{ background: {t['log_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['muted_text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding: 6px; }}
         QToolButton#logToggleButton {{ background: transparent; color: {t['muted_text']}; border: 1px solid transparent; border-radius: 6px; font-size: 12px; padding: 2px 8px; min-height: 22px; }}
         QToolButton#logToggleButton:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; color: {t['text']}; }}
+        QToolButton#compactMenuButton {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 7px; font-size: 12px; font-weight: bold; padding: 4px 8px; }}
+        QToolButton#compactMenuButton::menu-indicator {{ image: none; width: 0px; height: 0px; }}
+        QToolButton#compactMenuButton:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; }}
         QPushButton, QComboBox, QLineEdit, QDoubleSpinBox {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
+        QPushButton#connectionButton, QComboBox#portCombo {{ min-height: 28px; padding: 2px 8px; }}
         QPushButton#secondaryButton {{ color: {t['muted_text']}; font-size: 12px; min-width: 84px; max-width: 112px; padding: 1px 8px; }}
         QPushButton:hover, QComboBox:hover, QLineEdit:hover, QDoubleSpinBox:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; }}
         QCheckBox#autoTraceCheckbox {{ background: transparent; color: {t['text']}; spacing: 8px; padding: 4px 0px; min-height: 28px; }}
@@ -2615,19 +2697,267 @@ class RFBridgeWindow:
         self.log_box.append(line)
 
     def toggle_log_panel(self):
-        self.log_collapsed = not self.log_collapsed
+        self.set_log_collapsed(not self.log_collapsed)
+
+    def set_log_collapsed(self, collapsed):
+        self.log_collapsed = bool(collapsed)
         self.log_box.setVisible(not self.log_collapsed)
         self.log_toggle_button.setChecked(not self.log_collapsed)
         self.log_toggle_button.setText("▸ Log" if self.log_collapsed else "▾ Log")
 
     def toggle_compact_summary(self):
-        self.summary_compact = not self.summary_compact
+        self.set_summary_compact(not self.summary_compact)
+
+    def set_summary_compact(self, compact):
+        self.summary_compact = bool(compact)
         if self.summary_compact:
-            self.summary_label.setMaximumHeight(170)
+            self.summary_label.setMaximumHeight(150 if self.window.width() < RESPONSIVE_TIGHT_WIDTH else 190)
             self.compact_summary_button.setText("Full Summary")
         else:
             self.summary_label.setMaximumHeight(16777215)
             self.compact_summary_button.setText("Compact Summary")
+        self.update_top_frequencies(self.display_dbm or self.latest_dbm)
+
+    def update_connection_detail_visibility(self):
+        compact_connection = self.responsive_mode in ("tight", "compact")
+        self.device_info_label.setVisible(not compact_connection)
+        self.device_notice_label.setVisible(bool(self.device_notice_label.text()) and not compact_connection)
+
+    def update_compact_control_labels(self):
+        tight = self.responsive_mode == "tight"
+        self.compact_menu_button.setText("☰" if tight else "☰ Menu")
+        self.compact_menu_button.setFixedSize(42 if tight else 86, 34)
+        if self.demo_mode or self.demo_connect_pending:
+            self.disconnect_button.setText("Stop Demo" if tight else "Disconnect Demo")
+        elif self.connected or self.worker is not None:
+            self.disconnect_button.setText("Disconnect" if tight else "Disconnect tinySA")
+
+    def update_scan_control_labels(self):
+        tight = self.responsive_mode == "tight"
+        compact = self.responsive_mode in ("tight", "compact")
+        peak_label, _window_seconds = PEAK_MODES[self.peak_mode_index]
+        refresh_label = f"{format_seconds(self.refresh_seconds)}s"
+
+        if tight:
+            self.peak_button.setText("")
+            self.reset_button.setText("")
+            self.refresh_button.setText(refresh_label)
+            self.freeze_button.setText("")
+            self.return_live_button.setText("")
+        elif compact:
+            self.peak_button.setText(f"Peak {peak_label}")
+            self.reset_button.setText("Reset")
+            self.refresh_button.setText(refresh_label)
+            self.freeze_button.setText("Resume" if self.frozen else "Freeze")
+            self.return_live_button.setText("Live")
+        else:
+            self.peak_button.setText(f"  Peak {peak_label}")
+            self.reset_button.setText("  Reset")
+            self.refresh_button.setText(f"  {refresh_label}")
+            self.freeze_button.setText("  Resume" if self.frozen else "  Freeze")
+            self.return_live_button.setText("  Return to Live")
+
+    def update_tight_connection_chrome(self):
+        idle_disconnected = (
+            self.responsive_mode == "tight"
+            and not self.connected
+            and self.worker is None
+            and not self.demo_mode
+            and not self.demo_connect_pending
+            and not self.disconnect_pending
+        )
+        show_status_row = not idle_disconnected
+        self.status_dot.setVisible(show_status_row)
+        self.connection_status.setVisible(show_status_row)
+
+    def set_connection_panel_location(self, in_side_panel):
+        if in_side_panel == self.connection_panel_in_side:
+            return
+
+        self.connection_panel_in_side = bool(in_side_panel)
+        if self.connection_panel_in_side:
+            self.side_layout.insertWidget(0, self.connection_panel)
+        else:
+            self.top_layout.addWidget(self.connection_panel, stretch=0)
+            self.top_layout.setAlignment(self.connection_panel, self.Qt.AlignRight)
+
+    def set_controls_location(self, in_compact_bar):
+        if in_compact_bar == self.controls_in_compact_bar:
+            return
+
+        self.controls_in_compact_bar = bool(in_compact_bar)
+        if self.controls_in_compact_bar:
+            for button in (
+                self.peak_button,
+                self.reset_button,
+                self.refresh_button,
+                self.freeze_button,
+                self.return_live_button,
+            ):
+                button.setMinimumHeight(34)
+                self.compact_button_row.addWidget(button)
+            self.compact_summary_button.setVisible(False)
+            return
+
+        self.peak_row.addWidget(self.peak_button)
+        self.peak_row.addWidget(self.reset_button)
+        self.live_row.addWidget(self.refresh_button)
+        self.live_row.addWidget(self.freeze_button)
+        summary_button_index = self.side_layout.indexOf(self.compact_summary_button)
+        insert_index = summary_button_index if summary_button_index >= 0 else self.side_layout.count()
+        self.side_layout.insertWidget(insert_index, self.return_live_button)
+        self.compact_summary_button.setVisible(True)
+
+    def handle_resize_event(self, event):
+        self.apply_responsive_layout()
+        event.accept()
+
+    def apply_responsive_layout(self):
+        if not hasattr(self, "sidebar_panel"):
+            return
+
+        width = self.window.width()
+        height = self.window.height()
+        tight = width < RESPONSIVE_TIGHT_WIDTH or height < 650
+        compact = width < RESPONSIVE_COMPACT_WIDTH
+        medium = width < RESPONSIVE_MEDIUM_WIDTH
+        mode = "tight" if tight else "compact" if compact else "medium" if medium else "full"
+        self.responsive_mode = mode
+
+        self.sidebar_panel.setVisible(not compact)
+        self.compact_menu_button.setVisible(compact)
+        self.compact_top_spacer.setVisible(compact)
+        self.overlay_panel.setVisible(not compact)
+        self.overlay_subtitle.setVisible(not medium)
+        self.overlay_empty_hint.setVisible(not medium)
+        self.set_connection_panel_location(False)
+        self.side_panel.setVisible(not compact)
+        self.compact_bottom_panel.setVisible(compact)
+        self.set_controls_location(compact)
+        self.update_compact_control_labels()
+        self.update_scan_control_labels()
+        self.update_tight_connection_chrome()
+
+        if tight:
+            self.compact_button_row.setSpacing(6)
+            self.connection_layout.setContentsMargins(8, 6, 8, 6)
+            self.connection_layout.setVerticalSpacing(4)
+            self.connection_panel.setFixedWidth(min(350, max(285, width - 128)))
+            self.connection_panel.setFixedHeight(90)
+            self.hover_label.setVisible(False)
+            self.status_label.setFixedHeight(42)
+            self.connection_status.setMaximumHeight(30)
+            self.port_combo.setMinimumWidth(140)
+            self.port_combo.setMaximumWidth(330)
+            self.connect_button.setMaximumHeight(28)
+            self.refresh_ports_button.setMaximumHeight(28)
+            self.disconnect_button.setMaximumHeight(28)
+            for button in (
+                self.peak_button,
+                self.reset_button,
+                self.freeze_button,
+                self.return_live_button,
+            ):
+                button.setMinimumWidth(0)
+                button.setMaximumWidth(74)
+            self.refresh_button.setMinimumWidth(0)
+            self.refresh_button.setMaximumWidth(84)
+            self.device_info_label.setFixedHeight(0)
+            self.device_notice_label.setFixedHeight(0)
+            self.set_summary_compact(True)
+            if not self.log_collapsed:
+                self.responsive_forced_log_collapse = True
+                self.set_log_collapsed(True)
+        elif compact:
+            self.compact_button_row.setSpacing(8)
+            self.connection_layout.setContentsMargins(10, 8, 10, 8)
+            self.connection_layout.setVerticalSpacing(4)
+            self.connection_panel.setFixedWidth(440)
+            self.connection_panel.setFixedHeight(122)
+            self.hover_label.setVisible(True)
+            self.status_label.setFixedHeight(46)
+            self.connection_status.setMaximumHeight(16777215)
+            self.port_combo.setMinimumWidth(175)
+            self.port_combo.setMaximumWidth(420)
+            self.connect_button.setMaximumHeight(28)
+            self.refresh_ports_button.setMaximumHeight(28)
+            self.disconnect_button.setMaximumHeight(28)
+            for button in (
+                self.peak_button,
+                self.reset_button,
+                self.refresh_button,
+                self.freeze_button,
+                self.return_live_button,
+            ):
+                button.setMinimumWidth(0)
+                button.setMaximumWidth(16777215)
+            self.device_info_label.setFixedHeight(0)
+            self.device_notice_label.setFixedHeight(0)
+            self.set_summary_compact(True)
+            if not self.log_collapsed:
+                self.responsive_forced_log_collapse = True
+                self.set_log_collapsed(True)
+        elif medium:
+            self.compact_button_row.setSpacing(8)
+            self.connection_layout.setContentsMargins(10, 8, 10, 8)
+            self.connection_layout.setVerticalSpacing(4)
+            self.connection_panel.setFixedWidth(340)
+            self.connection_panel.setFixedHeight(185)
+            self.side_panel.setFixedWidth(315)
+            self.hover_label.setVisible(True)
+            self.status_label.setFixedHeight(42)
+            self.connection_status.setMaximumHeight(16777215)
+            self.port_combo.setMinimumWidth(200)
+            self.port_combo.setMaximumWidth(300)
+            self.connect_button.setMaximumHeight(28)
+            self.refresh_ports_button.setMaximumHeight(28)
+            self.disconnect_button.setMaximumHeight(28)
+            for button in (
+                self.peak_button,
+                self.reset_button,
+                self.refresh_button,
+                self.freeze_button,
+                self.return_live_button,
+            ):
+                button.setMaximumWidth(16777215)
+            self.device_info_label.setFixedHeight(40)
+            self.device_notice_label.setFixedHeight(42)
+            self.set_summary_compact(True)
+        else:
+            self.compact_button_row.setSpacing(8)
+            self.connection_layout.setContentsMargins(10, 8, 10, 8)
+            self.connection_layout.setVerticalSpacing(4)
+            self.connection_panel.setFixedWidth(360)
+            self.connection_panel.setFixedHeight(195)
+            self.side_panel.setFixedWidth(360)
+            self.side_panel.setVisible(True)
+            self.hover_label.setVisible(True)
+            self.status_label.setFixedHeight(38)
+            self.connection_status.setMaximumHeight(16777215)
+            self.port_combo.setMinimumWidth(205)
+            self.port_combo.setMaximumWidth(310)
+            self.connect_button.setMaximumHeight(28)
+            self.refresh_ports_button.setMaximumHeight(28)
+            self.disconnect_button.setMaximumHeight(28)
+            for button in (
+                self.peak_button,
+                self.reset_button,
+                self.refresh_button,
+                self.freeze_button,
+                self.return_live_button,
+            ):
+                button.setMaximumWidth(16777215)
+            self.device_info_label.setFixedHeight(42)
+            self.device_notice_label.setFixedHeight(44)
+            if self.summary_compact:
+                self.set_summary_compact(False)
+            if self.responsive_forced_log_collapse:
+                self.responsive_forced_log_collapse = False
+                self.set_log_collapsed(False)
+
+        self.update_connection_detail_visibility()
+        self.lock_plot_axes(preserve_x=True)
+        self.update_mic_marker_label_view_positions()
 
     def populate_ports(self):
         current = self.port_combo.currentData() or self.selected_port
@@ -2714,6 +3044,8 @@ class RFBridgeWindow:
     def connect_device(self):
         if self.connected:
             return
+        if self.worker is not None:
+            return
         port = self.port_combo.currentData()
         if not port:
             self.show_error("No serial port selected.")
@@ -2729,6 +3061,8 @@ class RFBridgeWindow:
         self.settings.set("last_port", port)
         self.force_disconnected_actions = False
         self.pending_disconnect_status = None
+        self.disconnect_pending = False
+        self.worker_disconnected = False
         self.scan_mismatch_count = 0
         self.worker_thread = self.QThread()
         self.worker = ScanWorker(port, self.refresh_seconds, debug_serial=self.debug_serial)
@@ -2749,11 +3083,13 @@ class RFBridgeWindow:
         self.log(f"Connecting to {port}")
 
     def disconnect_device(self):
-        if self.demo_mode:
+        if self.demo_mode or self.demo_connect_pending:
             self.stop_demo_mode()
             return
 
         if self.worker is not None:
+            self.disconnect_pending = True
+            self.update_connection_state(False, "Disconnecting…")
             self.QMetaObject.invokeMethod(
                 self.worker,
                 "stop",
@@ -2763,10 +3099,44 @@ class RFBridgeWindow:
             self.on_disconnected()
 
     def clear_worker_refs(self):
+        was_disconnect_pending = self.disconnect_pending
         self.worker = None
         self.worker_thread = None
+        self.disconnect_pending = False
+        self.worker_disconnected = False
         if not self.connected:
-            self.update_connection_state(False, self.connection_status.text())
+            status_text = "Disconnected" if was_disconnect_pending else self.connection_status.text()
+            self.update_connection_state(False, status_text)
+
+    def retire_worker_refs_after_disconnect(self):
+        if self.worker_thread is None:
+            self.worker = None
+            return
+
+        thread = self.worker_thread
+        try:
+            thread.finished.disconnect(self.clear_worker_refs)
+        except Exception:
+            pass
+
+        self.retired_worker_threads.append(thread)
+
+        def forget_thread():
+            try:
+                self.retired_worker_threads.remove(thread)
+            except ValueError:
+                pass
+
+        thread.finished.connect(forget_thread)
+        try:
+            thread.quit()
+        except Exception:
+            pass
+
+        self.worker = None
+        self.worker_thread = None
+        self.disconnect_pending = False
+        self.worker_disconnected = False
 
     def prompt_demo_range(self):
         from PySide6.QtWidgets import (
@@ -2904,6 +3274,7 @@ class RFBridgeWindow:
 
     def stop_demo_mode(self):
         self.demo_connect_pending = False
+        self.disconnect_pending = False
         if self.demo_timer is not None:
             self.demo_timer.stop()
             self.demo_timer.deleteLater()
@@ -3026,6 +3397,8 @@ class RFBridgeWindow:
         self.auto_connect_in_progress = False
         self.force_disconnected_actions = False
         self.pending_disconnect_status = None
+        self.disconnect_pending = False
+        self.worker_disconnected = False
         self.scan_mismatch_count = 0
         self.scan_error_count = 0
         self.reconnect_attempt_count = 0
@@ -3059,6 +3432,9 @@ class RFBridgeWindow:
         self.connected = False
         self.active_port = None
         self.scan_mismatch_count = 0
+        self.disconnect_pending = False
+        self.worker_disconnected = True
+        self.retire_worker_refs_after_disconnect()
         self.update_connection_state(False, status_text)
         self.render_mic_markers()
         if was_connected:
@@ -3076,6 +3452,8 @@ class RFBridgeWindow:
     def mark_device_unavailable(self, status, notice, log_message=None):
         self.auto_connect_in_progress = False
         self.force_disconnected_actions = True
+        self.disconnect_pending = False
+        self.worker_disconnected = True
         self.pending_disconnect_status = status
         self.show_device_notice(notice)
         self.update_connection_state(False, status)
@@ -3162,15 +3540,21 @@ class RFBridgeWindow:
         self.sidebar_connection_label.setText(status_text)
         device_name = "Demo Mode" if (self.demo_mode or self.demo_connect_pending) else (self.device_name if connected else "—")
         self.sidebar_device_label.setText(f"Device: {device_name}")
-        show_disconnect = (connected or self.worker is not None or self.demo_connect_pending) and not self.force_disconnected_actions
-        controls_busy = connected or self.worker is not None or self.demo_connect_pending
+        worker_busy = self.worker is not None and not self.worker_disconnected
+        show_disconnect = (
+            connected
+            or worker_busy
+            or self.demo_connect_pending
+        ) and not self.force_disconnected_actions and not self.disconnect_pending
+        controls_busy = connected or worker_busy or self.demo_connect_pending or self.disconnect_pending
         self.connect_button.setVisible(not show_disconnect)
         self.refresh_ports_button.setVisible(not show_disconnect)
         self.disconnect_button.setVisible(show_disconnect)
-        self.connect_button.setEnabled(not controls_busy)
+        self.connect_button.setEnabled(not controls_busy and self.worker is None)
         self.disconnect_button.setEnabled(show_disconnect)
         self.refresh_ports_button.setEnabled(not controls_busy)
         self.port_combo.setEnabled(not controls_busy)
+        self.update_compact_control_labels()
         if not connected and not self.demo_connect_pending:
             self.device_info_label.setText("Device: —\nRange: —")
             self.disconnect_button.setText("Disconnect")
@@ -3178,7 +3562,9 @@ class RFBridgeWindow:
                 self.update_frequency_range_labels([])
                 self.update_frequency_bounds([])
                 self.render_mic_markers()
+        self.update_connection_detail_visibility()
         self.update_status()
+        self.apply_responsive_layout()
 
     def update_frequency_range_labels(self, freqs_mhz=None):
         if freqs_mhz is None:
@@ -3203,11 +3589,11 @@ class RFBridgeWindow:
 
     def show_device_notice(self, message):
         self.device_notice_label.setText(message)
-        self.device_notice_label.setVisible(True)
+        self.update_connection_detail_visibility()
 
     def clear_device_notice(self):
         self.device_notice_label.setText("")
-        self.device_notice_label.setVisible(False)
+        self.update_connection_detail_visibility()
 
     def show_error(self, message):
         if self.shutting_down:
@@ -3229,7 +3615,7 @@ class RFBridgeWindow:
     def set_refresh_interval(self, seconds):
         self.refresh_seconds = seconds
         self.settings.set("refresh_seconds", seconds)
-        self.refresh_button.setText(f"  {format_seconds(seconds)}s")
+        self.update_scan_control_labels()
         if self.demo_timer is not None:
             self.demo_timer.start(int(seconds * 1000))
         if self.worker is not None:
@@ -3281,7 +3667,7 @@ class RFBridgeWindow:
 
     def toggle_freeze(self):
         self.frozen = not self.frozen
-        self.freeze_button.setText("  Resume" if self.frozen else "  Freeze")
+        self.update_scan_control_labels()
         self.log("Trace frozen" if self.frozen else "Trace resumed")
         if not self.frozen and self.latest_dbm and self.freqs_mhz:
             self.render_scan(self.latest_dbm)
@@ -3303,7 +3689,7 @@ class RFBridgeWindow:
         self.peak_mode_index = index % len(PEAK_MODES)
         self.settings.set("peak_mode_index", self.peak_mode_index)
         label, window_seconds = PEAK_MODES[self.peak_mode_index]
-        self.peak_button.setText(f"  Peak {label}")
+        self.update_scan_control_labels()
         if label == "OFF":
             self.peak_enabled = False
             self.peak_hold = None
@@ -3323,7 +3709,7 @@ class RFBridgeWindow:
         self.peak_mode_index = 0
         self.peak_hold = None
         self.peak_history = deque()
-        self.peak_button.setText("  Peak OFF")
+        self.update_scan_control_labels()
         self.peak_curve.setData([], [])
         self.update_hover_label(None)
 
@@ -3405,6 +3791,7 @@ class RFBridgeWindow:
     def update_top_frequencies(self, dbm):
         if not dbm:
             self.summary_label.setText("RF SUMMARY\n──────────────────────\n\nConnect to tinySA to begin.")
+            self.compact_summary_label.setText("RF Summary waiting")
             for marker in self.top_markers:
                 self.plot.removeItem(marker)
             self.top_markers = []
@@ -3412,14 +3799,31 @@ class RFBridgeWindow:
 
         median_floor = sorted(dbm)[len(dbm) // 2]
         strongest = heapq.nlargest(8, zip(self.freqs_mhz, dbm), key=lambda pair: pair[1])
-        text = "RF SUMMARY\n──────────────────────\n\n"
-        text += "Median Floor\n"
-        text += f"{median_floor:7.2f} dBm\n\n"
-        text += "TOP 8 RF HITS\n──────────────────────\n"
-        for i, (freq, level) in enumerate(strongest, start=1):
-            display_freq = snap_display_frequency(freq)
-            text += f"{i}. {display_freq:9.3f} MHz  {level:7.2f} dBm\n"
-        self.summary_label.setText(text)
+        compact_hit_count = 1 if self.responsive_mode == "tight" else 2 if self.responsive_mode == "compact" else 3
+        compact_hits = " | ".join(
+            f"{snap_display_frequency(freq):.3f} {level:.1f}"
+            for freq, level in strongest[:compact_hit_count]
+        )
+        self.compact_summary_label.setText(
+            f"Floor {median_floor:.1f} dBm   |   Top {compact_hits}"
+        )
+        if self.summary_compact:
+            text = "RF SUMMARY\n────────────────\n"
+            text += f"Floor {median_floor:.2f} dBm\n"
+            text += "TOP RF HITS\n"
+            for i, (freq, level) in enumerate(strongest[:3], start=1):
+                display_freq = snap_display_frequency(freq)
+                text += f"{i}. {display_freq:.3f}  {level:.1f} dBm\n"
+            self.summary_label.setText(text)
+        else:
+            text = "RF SUMMARY\n──────────────────────\n\n"
+            text += "Median Floor\n"
+            text += f"{median_floor:7.2f} dBm\n\n"
+            text += "TOP 8 RF HITS\n──────────────────────\n"
+            for i, (freq, level) in enumerate(strongest, start=1):
+                display_freq = snap_display_frequency(freq)
+                text += f"{i}. {display_freq:9.3f} MHz  {level:7.2f} dBm\n"
+            self.summary_label.setText(text)
         while len(self.top_markers) < len(strongest):
             marker = self.pg.InfiniteLine(
                 angle=90,
@@ -3504,21 +3908,48 @@ class RFBridgeWindow:
         if self.last_scan_received_time:
             last_scan_label = f"{int(max(0, now - self.last_scan_received_time))}s ago"
         if self.demo_mode or self.demo_connect_pending:
-            self.status_label.setText(
+            full_status = (
                 f"Mode: {freeze_label}   |   CSV: disabled   |   "
                 f"Refresh: {format_seconds(self.refresh_seconds)}s   |   Last scan: {last_scan_label}   |   "
                 f"Overlays: {overlay_count}   |   Auto: {auto_label}"
             )
+            if self.window.width() < RESPONSIVE_TIGHT_WIDTH:
+                status = f"{freeze_label} | CSV off | {format_seconds(self.refresh_seconds)}s"
+            elif self.window.width() < RESPONSIVE_COMPACT_WIDTH:
+                status = f"{freeze_label}   |   CSV off   |   {format_seconds(self.refresh_seconds)}s   |   Scan {last_scan_label}"
+            else:
+                status = full_status
+            self.status_label.setText(status)
+            self.status_label.setToolTip(full_status)
             return
         folder_label = os.path.basename(os.path.normpath(self.output_dir)) or self.output_dir
         latest_label = "latest_scan.csv" if self.last_save_time else "waiting"
-        self.status_label.setText(
+        port_label = os.path.basename(str(active_label)) if active_label else "—"
+        full_status = (
             f"Folder: {folder_label}   |   Latest: {latest_label}   |   "
             f"Next: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
             f"Mode: {freeze_label}   |   Port: {active_label}   |   Last scan: {last_scan_label}   |   "
             f"Reconnects: {self.reconnect_attempt_count}   |   Mismatch: {self.scan_mismatch_count}   |   "
             f"Overlays: {overlay_count}   |   Auto: {auto_label}"
         )
+        if self.window.width() < RESPONSIVE_TIGHT_WIDTH:
+            status = (
+                f"{folder_label} | {latest_label} | Next {minutes}:{seconds:02d} | "
+                f"{format_seconds(self.refresh_seconds)}s | {freeze_label}"
+            )
+        elif self.window.width() < RESPONSIVE_COMPACT_WIDTH:
+            status = (
+                f"{folder_label}   |   {latest_label}   |   Next {minutes}:{seconds:02d}   |   "
+                f"{format_seconds(self.refresh_seconds)}s   |   {freeze_label}"
+            )
+        else:
+            status = (
+                f"{folder_label}   |   {latest_label}   |   Next {minutes}:{seconds:02d}   |   "
+                f"{format_seconds(self.refresh_seconds)}s   |   {freeze_label}   |   "
+                f"{port_label}   |   Scan {last_scan_label}   |   R{self.reconnect_attempt_count} M{self.scan_mismatch_count}"
+            )
+        self.status_label.setText(status)
+        self.status_label.setToolTip(full_status)
 
     def handle_close_event(self, event):
         self.shutdown()

@@ -22,7 +22,20 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
+## What’s New in v2.0.0
+
+- Added responsive layout behavior for side-by-side and quarter-size window use.
+- Lowered the minimum app window to 820x560.
+- Compact widths automatically hide the left navigation rail and Capture Overlays panel.
+- Medium/compact widths tighten the connection panel and RF Summary so the graph stays usable.
+- Narrow layouts replace the right sidebar with a bottom control bar and compact RF summary line.
+- Quarter-size layouts use a compact navigation menu, simplified connection controls, scaled RF Top Hits, and icon-first scan controls.
+- Connection controls now recover cleanly after tinySA disconnects and Demo Mode cancellation.
+- The bottom status bar is consolidated in compact layouts with full diagnostics available by tooltip.
+- Compact layouts collapse the app log automatically while keeping the Log toggle available.
+
 ## What’s New in v1.9.9.7
+
 - Improved the Preferences dialog so the Auto Trace checkbox remains visible and properly sized on macOS.
 
 - Auto trace overlays now capture immediately when enabled, then continue on the configured interval.
@@ -176,8 +189,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v1.9.9.7-macOS-arm64.dmg
-dist/releases/RF-Bridge-v1.9.9.7-macOS-arm64.zip
+dist/releases/RF-Bridge-v2.0.0-macOS-arm64.dmg
+dist/releases/RF-Bridge-v2.0.0-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:
