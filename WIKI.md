@@ -40,8 +40,11 @@ RF Bridge reads frequency and amplitude data from the tinySA, displays it on the
 - Scroll horizontally / trackpad sideways to pan within the active scan range.
 - Click-drag the RF graph to draw a zoom box around a selected frequency area.
 - Double-click the graph to reset the full frequency view.
+- Use `Profiles > Set RF View Range` to zoom to common Shure ULX-D or Axient Digital band ranges.
 - Use Freeze to pause the visual trace without changing the saved scan workflow.
 - Use Peak modes to spot transient RF hits over time.
+
+RF view presets only change the graph window. They do not retune the tinySA or guarantee that a band is legal/available in your region.
 
 ## Wireless Workbench Workflow
 
@@ -67,7 +70,7 @@ Use Demo Mode when:
 - tinySA is not nearby.
 - You need to verify marker, overlay, zoom, or light/dark appearance behavior.
 
-Demo Mode supports built-in UHF presets and a custom frequency range. Its simulated trace includes a low RF floor, a few wireless-style carriers, slower random transient spikes, and persistent wide TV-style interference blocks.
+Demo Mode supports built-in UHF presets, named Shure ULX-D and Axient Digital presets, and a custom frequency range. Its simulated trace includes a low RF floor, a few wireless-style carriers, slower random transient spikes, and persistent wide TV-style interference blocks.
 
 ## Capture Overlays
 

@@ -22,17 +22,21 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
+## What’s New in v2.0.1
+
+- Added Shure ULX-D and Axient Digital RF view presets under `Profiles > Set RF View Range`.
+- Added matching named Shure presets to Demo Mode range selection.
+- RF view presets stay bounded to the active tinySA or Demo Mode scan range and do not send hardware range commands.
+- Hardened Peak Hold plotting so high-amplitude transient hits cannot shift the fixed dBm graph view.
+- Documented source ZIP cleanup guidance for manually shared packages.
+
 ## What’s New in v2.0.0
 
 - Added responsive layout behavior for side-by-side and quarter-size window use.
 - Lowered the minimum app window to 820x560.
 - Compact widths automatically hide the left navigation rail and Capture Overlays panel.
-- Medium/compact widths tighten the connection panel and RF Summary so the graph stays usable.
 - Narrow layouts replace the right sidebar with a bottom control bar and compact RF summary line.
 - Quarter-size layouts use a compact navigation menu, simplified connection controls, scaled RF Top Hits, and icon-first scan controls.
-- Connection controls now recover cleanly after tinySA disconnects and Demo Mode cancellation.
-- The bottom status bar is consolidated in compact layouts with full diagnostics available by tooltip.
-- Compact layouts collapse the app log automatically while keeping the Log toggle available.
 
 ## What’s New in v1.9.9.7
 
@@ -77,6 +81,7 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 ### Live RF Visualization
 - Real-time RF graphing
 - Bounded zoom and pan within the current frequency range
+- Shure ULX-D and Axient Digital RF view presets for quickly zooming to common band ranges
 - Adjustable refresh intervals
 - Peak hold modes
 - Freeze Trace mode
@@ -85,9 +90,16 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 ### Demo Mode
 - Prompted Demo Mode startup with selectable frequency ranges
 - Broadcast UHF and common Shure-style UHF presets
+- Named Shure ULX-D and Axient Digital demo range presets
 - Custom demo low/high frequency fields
 - Simulated two-second connection state before the demo trace starts
 - Demo disconnect control in the same location as the tinySA disconnect control
+
+### RF View Presets
+- Use `Profiles > Set RF View Range` to zoom the graph to common Shure ULX-D or Axient Digital band ranges.
+- View presets only change the RF Bridge graph window. They do not send frequency-range commands to the tinySA.
+- Presets are clipped to the currently connected tinySA or Demo Mode scan range.
+- Always confirm hardware band, local regulations, and venue coordination requirements before deploying wireless channels.
 
 ### tinySA Integration
 - Automatic tinySA detection
@@ -189,8 +201,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v2.0.0-macOS-arm64.dmg
-dist/releases/RF-Bridge-v2.0.0-macOS-arm64.zip
+dist/releases/RF-Bridge-v2.0.1-macOS-arm64.dmg
+dist/releases/RF-Bridge-v2.0.1-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

@@ -110,10 +110,34 @@ APPEARANCE_OPTIONS = ["System", "Dark", "Light"]
 DEMO_PORT = "__rf_bridge_demo__"
 DEMO_RANGE_PRESETS = [
     ("Broadcast UHF / TV 14–36", 470.000, 608.000),
-    ("Shure G50-style UHF", 470.000, 534.000),
-    ("Shure H50-style UHF", 534.000, 598.000),
-    ("Shure J50A-style UHF", 572.000, 616.000),
+    ("Shure ULX-D G50", 470.000, 534.000),
+    ("Shure ULX-D H50", 534.000, 598.000),
+    ("Shure ULX-D J50A", 572.000, 616.000),
+    ("Shure Axient Digital G57", 470.000, 616.000),
+    ("Shure Axient Digital H54", 520.000, 636.000),
+    ("Shure Axient Digital K54", 606.000, 663.000),
     ("Legacy 470–560 MHz demo", 470.000, 560.000),
+]
+SHURE_VIEW_RANGE_PRESETS = [
+    (
+        "ULX-D",
+        [
+            ("G50", 470.000, 534.000),
+            ("H50", 534.000, 598.000),
+            ("J50A", 572.000, 616.000),
+            ("L50", 632.000, 696.000),
+        ],
+    ),
+    (
+        "Axient Digital",
+        [
+            ("G57", 470.000, 616.000),
+            ("G62", 510.000, 530.000),
+            ("H54", 520.000, 636.000),
+            ("K54", 606.000, 663.000),
+            ("K55", 606.000, 694.000),
+        ],
+    ),
 ]
 DEMO_CONNECT_HOLD_MS = 2000
 RESPONSIVE_MEDIUM_WIDTH = 1200
@@ -322,6 +346,13 @@ def format_seconds(seconds):
 
 def snap_display_frequency(freq_mhz):
     return round(freq_mhz / FREQUENCY_DISPLAY_STEP_MHZ) * FREQUENCY_DISPLAY_STEP_MHZ
+
+
+def clamp_dbm_for_plot(dbm_values):
+    return [
+        min(max(float(level), RF_Y_MIN), RF_Y_MAX)
+        for level in dbm_values
+    ]
 
 
 def compact_capture_label(name):
@@ -1213,6 +1244,33 @@ class RFBridgeWindow:
         self.lock_plot_axes(preserve_x=True)
         self.log("Frequency view reset")
 
+    def apply_view_range_preset(self, label, low_mhz, high_mhz):
+        freqs_mhz = self.freqs_mhz or self.live_freqs_mhz
+        if not freqs_mhz:
+            self.show_error("Connect a tinySA or start Demo Mode before setting an RF view range.")
+            return
+
+        scan_low = min(freqs_mhz)
+        scan_high = max(freqs_mhz)
+        target_low = max(float(low_mhz), scan_low)
+        target_high = min(float(high_mhz), scan_high)
+        if target_high <= target_low:
+            self.show_error(
+                f"{label} ({low_mhz:.3f}–{high_mhz:.3f} MHz) is outside the current scan range "
+                f"({scan_low:.3f}–{scan_high:.3f} MHz)."
+            )
+            return
+
+        self.plot.setXRange(target_low, target_high, padding=0)
+        self.lock_plot_axes(preserve_x=True)
+        if target_low != low_mhz or target_high != high_mhz:
+            self.log(
+                f"RF view range set to {label}, clipped to current scan: "
+                f"{target_low:.3f}–{target_high:.3f} MHz"
+            )
+        else:
+            self.log(f"RF view range set to {label}: {target_low:.3f}–{target_high:.3f} MHz")
+
     def show_plot_context_menu(self, event):
         from PySide6.QtGui import QCursor
 
@@ -1318,6 +1376,17 @@ class RFBridgeWindow:
         load_profile_action.triggered.connect(self.import_profile)
         profiles_menu.addAction(load_profile_action)
 
+        profiles_menu.addSeparator()
+        view_range_menu = profiles_menu.addMenu("Set RF View Range")
+        for family, presets in SHURE_VIEW_RANGE_PRESETS:
+            family_menu = view_range_menu.addMenu(family)
+            for band, low, high in presets:
+                action = self.QAction(f"{band} ({low:.0f}–{high:.0f} MHz)", self.window)
+                action.triggered.connect(
+                    lambda _checked=False, label=f"{family} {band}", lo=low, hi=high: self.apply_view_range_preset(label, lo, hi)
+                )
+                family_menu.addAction(action)
+
         tools_menu = self.window.menuBar().addMenu("Tools")
         mic_plot_action = self.QAction("Markers / Mic Plot…", self.window)
         mic_plot_action.triggered.connect(self.open_mic_plot)
@@ -1409,7 +1478,7 @@ class RFBridgeWindow:
         self.update_frequency_range_labels()
         self.cursor_line.setPos(self.freqs_mhz[0])
         self.render_mic_markers()
-        self.live_curve.setData(self.freqs_mhz, self.display_dbm)
+        self.live_curve.setData(self.freqs_mhz, clamp_dbm_for_plot(self.display_dbm))
         self.update_top_frequencies(self.display_dbm)
         self.plot.setTitle(
             f"RF Bridge - {self.gig_slug} - Loaded Capture: {capture['name']}",
@@ -3701,7 +3770,8 @@ class RFBridgeWindow:
                 now = time.time()
                 self.peak_history.append((now, self.latest_dbm.copy()))
                 self.peak_hold = self.latest_dbm.copy()
-                self.peak_curve.setData(self.freqs_mhz, self.peak_hold)
+                self.peak_curve.setData(self.freqs_mhz, clamp_dbm_for_plot(self.peak_hold))
+        self.lock_plot_axes(preserve_x=True)
         self.log(f"Peak mode: {label}")
 
     def reset_peaks(self):
@@ -3711,6 +3781,7 @@ class RFBridgeWindow:
         self.peak_history = deque()
         self.update_scan_control_labels()
         self.peak_curve.setData([], [])
+        self.lock_plot_axes(preserve_x=True)
         self.update_hover_label(None)
 
     def on_scan_ready(self, dbm):
@@ -3781,8 +3852,8 @@ class RFBridgeWindow:
                     samples = (sample[1] for sample in self.peak_history)
                     self.peak_hold = [max(values) for values in zip(*samples)]
             if self.peak_hold:
-                self.peak_curve.setData(self.freqs_mhz, self.peak_hold)
-        self.live_curve.setData(self.freqs_mhz, dbm)
+                self.peak_curve.setData(self.freqs_mhz, clamp_dbm_for_plot(self.peak_hold))
+        self.live_curve.setData(self.freqs_mhz, clamp_dbm_for_plot(dbm))
         self.update_frequency_range_labels()
         self.update_top_frequencies(dbm)
         self.lock_plot_axes(preserve_x=True)

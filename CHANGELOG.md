@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.0.1
+
+- Added Shure ULX-D and Axient Digital RF view presets under `Profiles > Set RF View Range`.
+- Added matching named Shure presets to Demo Mode range selection.
+- Kept RF view presets bounded to the active tinySA or Demo Mode scan range instead of sending hardware range commands.
+- Hardened Peak Hold plotting so high-amplitude transient hits cannot shift the fixed dBm graph view.
+- Noted that manually shared source ZIPs should exclude `.git`, `__MACOSX`, `.DS_Store`, `wwb_scans`, and local cache/tmp files.
+
 ## v2.0.0
 
 - Added responsive layout behavior for side-by-side and quarter-size window use.
