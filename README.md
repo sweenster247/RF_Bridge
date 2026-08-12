@@ -22,6 +22,11 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
+## What’s New in v2.1.1
+
+- Updated dependency-audit GitHub Actions to current major versions.
+- Bumped package, app, macOS bundle, and release artifact metadata to v2.1.1.
+
 ## What’s New in v2.1.0
 
 - Added `Setup` for selecting target range, RBW, acquisition mode, and sweep points.
@@ -220,8 +225,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v2.1.0-macOS-arm64.dmg
-dist/releases/RF-Bridge-v2.1.0-macOS-arm64.zip
+dist/releases/RF-Bridge-v2.1.1-macOS-arm64.dmg
+dist/releases/RF-Bridge-v2.1.1-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:

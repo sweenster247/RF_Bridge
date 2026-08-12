@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.1.1
+
+- Updated dependency-audit GitHub Actions to `actions/checkout@v7` and `actions/setup-python@v7`.
+- Bumped package, app, macOS bundle, and release artifact metadata to v2.1.1.
+
 ## v2.1.0
 
 - Added `Scan Setup` for choosing a target tinySA range, RBW, acquisition mode, and point count before or during a session.
