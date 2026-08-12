@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.1.0
+
+- Added `Scan Setup` for choosing a target tinySA range, RBW, acquisition mode, and point count before or during a session.
+- Added a startup scan setup step so the launch flow is `Gig name -> Scan setup -> Good to Go`.
+- Added high-resolution tinySA Ultra+ USB acquisition using `scanraw`, with generated RF Bridge frequency axes and a visible scan progress bar.
+- Added broad modern Shure presets covering ULX-D, Axient Digital, and PSM ranges, plus custom range entry.
+- Added scan health readouts for bin spacing, points, RBW, measured scan duration, and learned refresh timing.
+- Reworked RF Summary so high-resolution scans cluster adjacent bins into RF events, with Top 4, Top 8, and Compact display modes.
+- Improved high-resolution pause/resume wording and disconnect handling while a sweep is in progress.
+- Improved reconnect tolerance for tinySA devices attached through USB-C/Thunderbolt hubs and docks.
+- Shortened the tinySA device selector while preserving full serial metadata in tooltips.
+- Preserved the previous `data 1` display-trace path as Compatibility mode for fallback testing.
+- Extended the tinySA diagnostic script with a `--scanraw` probe for validating high-resolution USB responses.
+- Saved scan setup in app settings and exported/imported it with RF Bridge profiles.
+
 ## v2.0.1
 
 - Added Shure ULX-D and Axient Digital RF view presets under `Profiles > Set RF View Range`.

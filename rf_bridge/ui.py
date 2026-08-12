@@ -17,6 +17,19 @@ from .capture import load_capture_csv
 from .micplot import MARKER_COLORS, DEFAULT_MARKER_COLOR, load_markers, save_markers
 from .config import SCAN_INTERVAL_SECONDS, UI_UPDATE_SECONDS
 from .export import save_wwb_csv
+from .scan_profile import (
+    ACQUISITION_COMPATIBILITY,
+    ACQUISITION_SCANRAW,
+    RBW_OPTIONS_KHZ,
+    SCAN_RANGE_PRESETS,
+    ScanProfile,
+    estimate_scan_seconds,
+    estimate_points,
+    profile_from_settings,
+    recommended_refresh_seconds,
+    save_profile_to_settings,
+    normalize_rbw_khz,
+)
 from .settings import AppSettings
 from .tinysa import candidate_serial_ports, describe_port, find_tinysa_port
 from .utils import time_12h
@@ -155,6 +168,13 @@ MIC_MARKER_LABEL_LANES = [-18, -30, -42, -54, -66]
 MIC_MARKER_LABEL_MIN_GAP_MHZ = 8.0
 MIC_MARKER_LABEL_GAP_RATIO = 0.075
 MIC_MARKER_LABEL_PIXEL_PADDING = 28
+REFERENCE_SHIFT_MIN_DB = 8.0
+REFERENCE_SHIFT_COHERENT_RATIO = 0.70
+REFERENCE_SHIFT_BIN_TOLERANCE_DB = 3.0
+REFERENCE_SHIFT_NOTICE_COOLDOWN_SECONDS = 30.0
+TOP_HIT_DEFAULT_SPACING_MHZ = 0.150
+TOP_HIT_MIN_PROMINENCE_DB = 3.0
+SUMMARY_DISPLAY_MODES = ("top4", "top8", "compact")
 
 
 class UiBridgeFactory:
@@ -174,6 +194,11 @@ class UiBridgeFactory:
             scan_ready = Signal(list)
             disconnected = Signal()
             reconnecting = Signal(str)
+            retuned = Signal(str, float, float, list)
+            retune_failed = Signal(str)
+            scan_progress = Signal(int, int, str)
+            scan_timing = Signal(float, float)
+            apply_scan_profile = Signal(object)
             error = Signal(str)
             log = Signal(str)
             update_checked = Signal(str, str)
@@ -482,7 +507,15 @@ class DownwardComboBoxFactory:
 
 
 class RFBridgeWindow:
-    def __init__(self, output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None, debug_serial=False):
+    def __init__(
+        self,
+        output_dir,
+        gig_slug,
+        ui_update_seconds=UI_UPDATE_SECONDS,
+        selected_port=None,
+        debug_serial=False,
+        prompt_scan_setup_on_launch=True,
+    ):
         from PySide6.QtCore import Qt, QThread, Signal, QMetaObject, Q_ARG, QTimer, QSize
         from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
         from PySide6.QtWidgets import (
@@ -497,6 +530,7 @@ class RFBridgeWindow:
             QMenu,
             QMessageBox,
             QPushButton,
+            QProgressBar,
             QSizePolicy,
             QTextEdit,
             QToolButton,
@@ -515,10 +549,16 @@ class RFBridgeWindow:
         self.QTimer = QTimer
         self.QAction = QAction
         self.pg = pg
+        self.app = QApplication.instance() or QApplication([])
+        # Re-enable normal desktop-app behavior now that a real main window
+        # exists. Startup dialogs temporarily disable this in app.py.
+        self.app.setQuitOnLastWindowClosed(True)
+        self.settings = AppSettings()
 
         self.output_dir = output_dir
         self.gig_slug = gig_slug
         self.selected_port = selected_port
+        self.prompt_scan_setup_on_launch = bool(prompt_scan_setup_on_launch)
         self.device_name = "tinySA"
         self.debug_serial = debug_serial
         self.freqs_mhz = []
@@ -548,10 +588,16 @@ class RFBridgeWindow:
         self.scan_mismatch_count = 0
         self.reconnect_attempt_count = 0
         self.last_scan_received_time = None
+        self.last_scan_duration_seconds = None
+        self.last_reference_shift_notice_time = 0.0
+        self.last_reference_shift = None
         self.active_port = None
         self.log_history = deque(maxlen=200)
         self.log_collapsed = False
         self.summary_compact = False
+        self.summary_compact_user_selected = False
+        self.summary_display_mode = "top4"
+        self.summary_display_mode_user_selected = "top4"
         self.responsive_mode = None
         self.responsive_forced_log_collapse = False
         self.connection_panel_in_side = False
@@ -561,6 +607,7 @@ class RFBridgeWindow:
         self.pending_disconnect_status = None
         self.disconnect_pending = False
         self.worker_disconnected = False
+        self.pause_pending = False
         self.shutting_down = False
         self.shutdown_started = False
         self.live_freqs_mhz = []
@@ -581,7 +628,13 @@ class RFBridgeWindow:
         self.demo_low_mhz = 470.0
         self.demo_high_mhz = 608.0
         self.port_map = {}
-        self.settings = AppSettings()
+        self.scan_profile = profile_from_settings(self.settings)
+        self.summary_compact_user_selected = self.settings.get_bool("summary_compact", False)
+        saved_summary_mode = str(self.settings.get("summary_display_mode", "compact" if self.summary_compact_user_selected else "top4"))
+        self.summary_display_mode = saved_summary_mode if saved_summary_mode in SUMMARY_DISPLAY_MODES else "top4"
+        self.summary_display_mode_user_selected = self.summary_display_mode
+        self.summary_compact = self.summary_display_mode == "compact"
+        self.pause_pending = False
         self.auto_trace_enabled = self.settings.get_bool("auto_trace_enabled", False)
         self.auto_trace_minutes = max(1.0, self.settings.get_float("auto_trace_minutes", 10.0))
         self.filename_time_format = self.settings.get_filename_time_format()
@@ -593,6 +646,10 @@ class RFBridgeWindow:
         self.ui_bridge.scan_ready.connect(self.on_scan_ready)
         self.ui_bridge.error.connect(self.on_worker_error)
         self.ui_bridge.reconnecting.connect(self.on_worker_reconnecting)
+        self.ui_bridge.retuned.connect(self.on_retuned)
+        self.ui_bridge.retune_failed.connect(self.on_retune_failed)
+        self.ui_bridge.scan_progress.connect(self.on_scan_progress)
+        self.ui_bridge.scan_timing.connect(self.on_scan_timing)
         self.ui_bridge.log.connect(self.log)
         self.ui_bridge.disconnected.connect(self.on_disconnected)
         self.ui_bridge.update_checked.connect(self.on_update_check_finished)
@@ -606,10 +663,6 @@ class RFBridgeWindow:
         self.refresh_seconds = float(saved_refresh)
         self.selected_port = selected_port or self.settings.get("last_port", None)
 
-        self.app = QApplication.instance() or QApplication([])
-        # Re-enable normal desktop-app behavior now that a real main window
-        # exists. Startup dialogs temporarily disable this in app.py.
-        self.app.setQuitOnLastWindowClosed(True)
         self.window = QMainWindow()
         self.window.closeEvent = self.handle_close_event
         self.window.resizeEvent = self.handle_resize_event
@@ -757,15 +810,19 @@ class RFBridgeWindow:
         self.refresh_ports_button.setObjectName("connectionButton")
         self.connect_button = QPushButton("Connect")
         self.connect_button.setObjectName("connectionButton")
+        self.scan_setup_button = QPushButton("Setup")
+        self.scan_setup_button.setObjectName("secondaryButton")
+        self.scan_setup_button.setToolTip("Choose tinySA scan range, RBW, point count, and acquisition mode")
         self.disconnect_button = QPushButton("Disconnect")
         self.disconnect_button.setObjectName("secondaryButton")
         self.disconnect_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.disconnect_button.setEnabled(False)
         self.disconnect_button.setVisible(False)
-        self.device_info_label = QLabel("Device: —\nRange: —")
+        self.device_info_label = QLabel("Device: —\nScan: —")
         self.device_info_label.setObjectName("deviceInfoLabel")
+        self.device_info_label.setWordWrap(True)
         self.device_info_label.setMinimumWidth(0)
-        self.device_info_label.setFixedHeight(42)
+        self.device_info_label.setFixedHeight(64)
         self.device_info_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.device_notice_label = QLabel("")
         self.device_notice_label.setObjectName("deviceNoticeLabel")
@@ -774,12 +831,20 @@ class RFBridgeWindow:
         self.device_notice_label.setFixedHeight(44)
         self.device_notice_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.device_notice_label.setVisible(False)
+        self.scan_progress = QProgressBar()
+        self.scan_progress.setObjectName("scanProgress")
+        self.scan_progress.setRange(0, 100)
+        self.scan_progress.setValue(0)
+        self.scan_progress.setTextVisible(False)
+        self.scan_progress.setFixedHeight(10)
+        self.scan_progress.setVisible(False)
 
         self.port_combo.setMinimumWidth(205)
         self.port_combo.setMaximumWidth(310)
         self.port_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.port_combo.setMinimumContentsLength(18)
         self.port_combo.view().setTextElideMode(self.Qt.ElideMiddle)
-        for _btn in (self.refresh_ports_button, self.connect_button, self.disconnect_button):
+        for _btn in (self.refresh_ports_button, self.connect_button, self.scan_setup_button, self.disconnect_button):
             _btn.setMinimumHeight(24)
             _btn.setMaximumHeight(28)
         self.disconnect_button.setEnabled(False)
@@ -789,12 +854,14 @@ class RFBridgeWindow:
         connection_layout.addWidget(self.disconnect_button, 0, 3, 1, 1)
         connection_layout.addWidget(self.port_combo, 1, 0, 1, 4)
         connection_layout.addWidget(self.connect_button, 2, 0, 1, 2)
-        connection_layout.addWidget(self.refresh_ports_button, 2, 2, 1, 2)
+        connection_layout.addWidget(self.scan_setup_button, 2, 2, 1, 1)
+        connection_layout.addWidget(self.refresh_ports_button, 2, 3, 1, 1)
         connection_layout.addWidget(self.device_info_label, 3, 0, 1, 4)
         connection_layout.addWidget(self.device_notice_label, 4, 0, 1, 4)
+        connection_layout.addWidget(self.scan_progress, 5, 0, 1, 4)
         connection_layout.setColumnStretch(1, 1)
         connection_panel.setFixedWidth(360)
-        connection_panel.setFixedHeight(195)
+        connection_panel.setFixedHeight(234)
 
         self.overlay_panel = QFrame()
         self.overlay_panel.setObjectName("overlayPanel")
@@ -924,6 +991,7 @@ class RFBridgeWindow:
         self.summary_label.setObjectName("summaryLabel")
         self.summary_label.setAlignment(self.Qt.AlignTop | self.Qt.AlignLeft)
         self.summary_label.setTextInteractionFlags(self.Qt.TextSelectableByMouse)
+        self.summary_label.setMinimumHeight(245)
         self.hover_label = QLabel("Hover graph for readout.")
         self.hover_label.setObjectName("hoverLabel")
         self.hover_label.setAlignment(self.Qt.AlignTop | self.Qt.AlignLeft)
@@ -943,13 +1011,13 @@ class RFBridgeWindow:
         self.refresh_button.setToolTip("Cycle scan refresh interval. Right-click for all refresh options.")
         self.refresh_button.setContextMenuPolicy(self.Qt.CustomContextMenu)
         self.freeze_button = QPushButton("  Freeze")
-        self.freeze_button.setToolTip("Freeze or resume the live trace")
+        self.freeze_button.setToolTip("Pause or resume live scanning")
         self.return_live_button = QPushButton("  Return to Live")
         self.return_live_button.setToolTip("Return the graph to the live trace")
         self.return_live_button.setEnabled(False)
-        self.compact_summary_button = QPushButton("Compact Summary")
+        self.compact_summary_button = QPushButton("Top 4")
         self.compact_summary_button.setObjectName("secondaryButton")
-        self.compact_summary_button.setToolTip("Toggle a shorter RF summary panel")
+        self.compact_summary_button.setToolTip("Cycle RF summary density: Top 4, Top 8, Compact")
 
         control_icons = (
             (self.peak_button, "icons/icon-peak.svg"),
@@ -1036,6 +1104,7 @@ class RFBridgeWindow:
         self.refresh_ports_button.clicked.connect(self.populate_ports)
         self.port_combo.activated.connect(self.mark_port_selection_touched)
         self.connect_button.clicked.connect(self.connect_device)
+        self.scan_setup_button.clicked.connect(self.open_scan_setup)
         self.disconnect_button.clicked.connect(self.disconnect_device)
         self.peak_button.clicked.connect(self.toggle_peak)
         self.peak_button.customContextMenuRequested.connect(self.show_peak_menu)
@@ -1063,19 +1132,15 @@ class RFBridgeWindow:
 
         self.populate_ports()
         self.update_connection_state(False)
+        self.update_scan_setup_button()
+        self.set_summary_display_mode(self.summary_display_mode_user_selected, from_layout=True)
         self.update_status()
         self.mic_markers = load_markers(self.settings)
         self.render_mic_markers()
         self.log(f"RF Bridge v{__version__} ready")
         self.QTimer.singleShot(0, self.apply_responsive_layout)
 
-        if selected_port:
-            # Defer explicit manual-port connection until after the window is
-            # shown and the Qt event loop is running.
-            self.QTimer.singleShot(900, self.connect_device)
-        else:
-            self.log("Demo Mode is ready. Looking for tinySA in the background.")
-            self.QTimer.singleShot(900, self.start_auto_detect)
+        self.QTimer.singleShot(350, self.run_startup_flow)
 
     def resolve_theme_name(self, appearance):
         if appearance == "Light":
@@ -1151,12 +1216,15 @@ class RFBridgeWindow:
         QFrame#navigationPanel {{ background: {t['side_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
         QFrame#sidePanel {{ background: {t['side_bg']}; border-left: 1px solid {t['border']}; }}
         QFrame#compactBottomPanel {{ background: {t['side_bg']}; border: 1px solid {t['border']}; border-radius: 8px; }}
-        QLabel#summaryLabel, QLabel#hoverLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; }}
+        QLabel#summaryLabel, QLabel#hoverLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; }}
         QLabel#compactSummaryLabel {{ color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; background: transparent; }}
         QLabel#hoverLabel {{ background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 8px; }}
         QLabel#statusLabel {{ background: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 6px; color: {t['text']}; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; padding-left: 14px; }}
         QLabel#statusDot {{ color: {t['disconnected']}; font-size: 22px; background: transparent; }}
         QLabel#connectionStatus {{ font-weight: bold; background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 12px; padding: 3px 10px; font-size: 14px; }}
+        QLabel#connectionStatus[state="connected"] {{ color: {t['connected']}; border: 1px solid {t['connected']}; }}
+        QLabel#connectionStatus[state="connecting"] {{ color: {t['connecting']}; border: 1px solid {t['connecting']}; }}
+        QLabel#connectionStatus[state="disconnected"] {{ color: {t['disconnected']}; border: 1px solid {t['disconnected']}; }}
         QLabel#deviceInfoLabel {{ color: {t['muted_text']}; background: transparent; font-size: 12px; padding-top: 2px; }}
         QLabel#deviceNoticeLabel {{ color: {t['disconnected']}; background: transparent; font-size: 12px; padding-top: 2px; }}
         QLabel#overlayHeaderIcon {{ color: {t['text']}; padding: 0px; margin-right: 4px; background: {t['hover_bg']}; border: 1px solid {t['border']}; border-radius: 7px; }}
@@ -1178,17 +1246,21 @@ class RFBridgeWindow:
         QToolButton#compactMenuButton {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 7px; font-size: 12px; font-weight: bold; padding: 4px 8px; }}
         QToolButton#compactMenuButton::menu-indicator {{ image: none; width: 0px; height: 0px; }}
         QToolButton#compactMenuButton:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; }}
-        QPushButton, QComboBox, QLineEdit, QDoubleSpinBox {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
+        QPushButton, QComboBox, QLineEdit, QDoubleSpinBox, QSpinBox {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; border-radius: 6px; font-size: 13px; min-height: 32px; padding: 4px 10px; }}
         QPushButton#connectionButton, QComboBox#portCombo {{ min-height: 28px; padding: 2px 8px; }}
         QPushButton#secondaryButton {{ color: {t['muted_text']}; font-size: 12px; min-width: 84px; max-width: 112px; padding: 1px 8px; }}
-        QPushButton:hover, QComboBox:hover, QLineEdit:hover, QDoubleSpinBox:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; }}
+        QPushButton:hover, QComboBox:hover, QLineEdit:hover, QDoubleSpinBox:hover, QSpinBox:hover {{ background: {t['interactive_hover_bg']}; border: 1px solid {t['interactive_hover_border']}; }}
         QCheckBox#autoTraceCheckbox {{ background: transparent; color: {t['text']}; spacing: 8px; padding: 4px 0px; min-height: 28px; }}
         QCheckBox#autoTraceCheckbox::indicator {{ width: 18px; height: 18px; }}
+        QProgressBar#scanProgress {{ background: {t['button_disabled_bg']}; border: 1px solid {t['border']}; border-radius: 4px; }}
+        QProgressBar#scanProgress::chunk {{ background: {t['connected']}; border-radius: 3px; }}
         QPushButton:pressed {{ background: {t['button_pressed']}; }}
         QPushButton:disabled {{ color: {t['button_disabled_text']}; background: {t['button_disabled_bg']}; }}
         QComboBox QAbstractItemView {{ background: {t['button_bg']}; color: {t['text']}; border: 1px solid {t['border']}; selection-background-color: {t['interactive_hover_bg']}; selection-color: {t['text']}; outline: 0; }}
         QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ background: {t['button_bg']}; border: 0px; width: 16px; }}
         QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{ background: {t['interactive_hover_bg']}; }}
+        QSpinBox::up-button, QSpinBox::down-button {{ background: {t['button_bg']}; border: 0px; width: 16px; }}
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {t['interactive_hover_bg']}; }}
         """
 
     def lock_plot_axes(self, preserve_x=False):
@@ -1270,6 +1342,376 @@ class RFBridgeWindow:
             )
         else:
             self.log(f"RF view range set to {label}: {target_low:.3f}–{target_high:.3f} MHz")
+
+    def update_scan_setup_button(self):
+        if not hasattr(self, "scan_setup_button"):
+            return
+        rbw = "Auto" if self.scan_profile.rbw_khz is None else f"{self.scan_profile.rbw_khz}k"
+        self.scan_setup_button.setText("Setup")
+        self.scan_setup_button.setToolTip(
+            f"{self.scan_profile.label}\n"
+            f"{self.scan_profile.low_mhz:.3f}-{self.scan_profile.high_mhz:.3f} MHz\n"
+            f"RBW {rbw}, {self.scan_profile.points} points"
+        )
+        if hasattr(self, "device_info_label") and not self.connected:
+            self.update_device_info_label()
+
+    def scan_step_khz(self):
+        span_mhz = max(0.0, float(self.scan_profile.high_mhz) - float(self.scan_profile.low_mhz))
+        return (span_mhz * 1000.0) / max(int(self.scan_profile.points) - 1, 1)
+
+    def scan_setup_summary(self):
+        return (
+            f"{self.scan_profile.low_mhz:.3f}-{self.scan_profile.high_mhz:.3f} MHz · "
+            f"{self.scan_step_khz():.1f} kHz/bin · {self.scan_profile.points:,} pts"
+        )
+
+    def scan_health_summary(self):
+        duration = "scan n/a"
+        if self.last_scan_duration_seconds is not None:
+            duration = f"last {format_seconds(self.last_scan_duration_seconds)}s"
+        mode = "USB high-res" if self.scan_profile.acquisition_mode == ACQUISITION_SCANRAW else "display trace"
+        rbw = "RBW Auto" if self.scan_profile.rbw_khz is None else f"RBW {self.scan_profile.rbw_khz} kHz"
+        return (
+            f"{mode} · {rbw} · {duration} · next {format_seconds(self.refresh_seconds)}s · "
+            f"M{self.scan_mismatch_count}"
+        )
+
+    def update_device_info_label(self, device_name=None, freqs_mhz=None):
+        if not hasattr(self, "device_info_label"):
+            return
+        if device_name is None:
+            if self.demo_mode or self.demo_connect_pending:
+                device_name = "Demo Mode"
+            elif self.connected:
+                device_name = self.device_name or "tinySA"
+            else:
+                device_name = "—"
+        scan_line = self.scan_setup_summary()
+        if freqs_mhz:
+            step_khz = (
+                (float(max(freqs_mhz)) - float(min(freqs_mhz))) * 1000.0 / max(len(freqs_mhz) - 1, 1)
+            )
+            scan_line = (
+                f"{min(freqs_mhz):.3f}-{max(freqs_mhz):.3f} MHz · "
+                f"{step_khz:.1f} kHz/bin · {len(freqs_mhz):,} pts"
+            )
+        self.device_info_label.setText(
+            f"Device: {device_name}\n"
+            f"Scan: {scan_line}\n"
+            f"{self.scan_health_summary()}"
+        )
+
+    def compact_port_label(self, port):
+        device_name = os.path.basename(str(getattr(port, "device", "") or "serial"))
+        description = str(getattr(port, "description", "") or "").strip()
+        manufacturer = str(getattr(port, "manufacturer", "") or "").strip()
+        lowered = f"{description} {manufacturer}".lower()
+        if "tinysa4" in lowered or "tinysa 4" in lowered:
+            product = "tinySA4"
+        elif "tinysa" in lowered:
+            product = "tinySA"
+        elif description:
+            product = description
+        else:
+            product = "Serial"
+        return f"{product} · {device_name}"
+
+    def apply_scan_profile(self, profile):
+        self.scan_profile = profile
+        save_profile_to_settings(self.settings, profile)
+        self.update_scan_setup_button()
+        self.update_device_info_label()
+        self.log(f"Scan setup saved: {profile.summary()}")
+        if self.connected and self.worker is not None and not self.demo_mode:
+            self.update_connection_state(True, "Applying scan setup...")
+            self.ui_bridge.apply_scan_profile.emit(profile)
+        self.update_status()
+
+    def run_startup_flow(self):
+        if self.shutting_down:
+            return
+        if self.prompt_scan_setup_on_launch:
+            self.open_scan_setup(startup=True)
+
+        if self.selected_port:
+            # Defer explicit manual-port connection until after the startup
+            # scan setup dialog has closed and the Qt event loop has resumed.
+            self.QTimer.singleShot(500, self.connect_device)
+        else:
+            self.log("Demo Mode is ready. Looking for tinySA in the background.")
+            self.QTimer.singleShot(500, self.start_auto_detect)
+
+    def open_scan_setup(self, startup=False):
+        from PySide6.QtWidgets import (
+            QCheckBox,
+            QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QDoubleSpinBox,
+            QFormLayout,
+            QHBoxLayout,
+            QLabel,
+            QSpinBox,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(self.window)
+        dialog.setWindowTitle("RF Bridge Scan Setup" if startup else "tinySA Scan Setup")
+        dialog.setMinimumWidth(520)
+        layout = QVBoxLayout(dialog)
+        if startup:
+            intro_text = "Choose the RF range and resolution for this session. RF Bridge will connect after this setup step."
+        else:
+            intro_text = "Choose the RF range and resolution RF Bridge should request from the tinySA."
+        intro = QLabel(intro_text)
+        intro.setWordWrap(True)
+
+        preset_combo = DownwardComboBoxFactory.create(QComboBox)
+        for label, low, high in SCAN_RANGE_PRESETS:
+            preset_combo.addItem(label, (label, low, high))
+
+        current_index = preset_combo.findText(self.scan_profile.label)
+        if current_index >= 0:
+            preset_combo.setCurrentIndex(current_index)
+        else:
+            preset_combo.setCurrentIndex(max(0, preset_combo.findText("Custom Range")))
+
+        low_spin = QDoubleSpinBox()
+        low_spin.setRange(100.0, 1300.0)
+        low_spin.setDecimals(3)
+        low_spin.setSingleStep(1.0)
+        low_spin.setSuffix(" MHz")
+        low_spin.setValue(float(self.scan_profile.low_mhz))
+        high_spin = QDoubleSpinBox()
+        high_spin.setRange(100.0, 1300.0)
+        high_spin.setDecimals(3)
+        high_spin.setSingleStep(1.0)
+        high_spin.setSuffix(" MHz")
+        high_spin.setValue(float(self.scan_profile.high_mhz))
+
+        rbw_combo = DownwardComboBoxFactory.create(QComboBox)
+        for label, value in RBW_OPTIONS_KHZ:
+            rbw_combo.addItem(label, value)
+        rbw_index = rbw_combo.findData(self.scan_profile.rbw_khz)
+        rbw_combo.setCurrentIndex(max(0, rbw_index))
+
+        auto_points_check = QCheckBox("Auto-fill points from range and RBW")
+        auto_points_check.setChecked(True)
+        points_spin = QSpinBox()
+        points_spin.setRange(101, 50000)
+        points_spin.setSingleStep(100)
+        points_spin.setValue(int(self.scan_profile.points))
+
+        acquisition_combo = DownwardComboBoxFactory.create(QComboBox)
+        acquisition_combo.addItem("High-resolution USB scanraw", ACQUISITION_SCANRAW)
+        acquisition_combo.addItem("Compatibility: tinySA display trace", ACQUISITION_COMPATIBILITY)
+        acquisition_index = acquisition_combo.findData(self.scan_profile.acquisition_mode)
+        acquisition_combo.setCurrentIndex(max(0, acquisition_index))
+
+        sync_check = QCheckBox("Also park tinySA display on this range")
+        sync_check.setChecked(bool(self.scan_profile.sync_device_sweep))
+
+        estimate_label = QLabel("")
+        estimate_label.setObjectName("deviceInfoLabel")
+        estimate_label.setWordWrap(True)
+
+        def selected_rbw():
+            value = rbw_combo.currentData()
+            return None if value is None else int(value)
+
+        def refresh_estimate(update_points=True):
+            low = float(low_spin.value())
+            high = float(high_spin.value())
+            rbw = selected_rbw()
+            estimated = estimate_points(low, high, rbw)
+            if update_points and auto_points_check.isChecked():
+                points_spin.blockSignals(True)
+                points_spin.setValue(estimated)
+                points_spin.blockSignals(False)
+            step_khz = ((high - low) * 1000.0 / max(points_spin.value() - 1, 1)) if high > low else 0
+            rbw_text = "Auto" if rbw is None else f"{rbw} kHz"
+            scan_seconds = estimate_scan_seconds(points_spin.value(), rbw)
+            refresh_seconds = recommended_refresh_seconds(scan_seconds)
+            estimate_label.setText(
+                f"Estimated step: {step_khz:.2f} kHz   |   RBW: {rbw_text}   |   "
+                f"Points: {points_spin.value():,}\n"
+                f"Estimated scan: {format_seconds(scan_seconds)}s   |   Suggested refresh: {format_seconds(refresh_seconds)}s"
+            )
+
+        def apply_preset(index):
+            label, low, high = preset_combo.itemData(index)
+            if label != "Custom Range":
+                low_spin.setValue(float(low))
+                high_spin.setValue(float(high))
+            refresh_estimate()
+
+        def mark_custom():
+            custom_index = preset_combo.findText("Custom Range")
+            if custom_index >= 0:
+                preset_combo.blockSignals(True)
+                preset_combo.setCurrentIndex(custom_index)
+                preset_combo.blockSignals(False)
+            refresh_estimate()
+
+        preset_combo.currentIndexChanged.connect(apply_preset)
+        low_spin.valueChanged.connect(mark_custom)
+        high_spin.valueChanged.connect(mark_custom)
+        rbw_combo.currentIndexChanged.connect(lambda _index: refresh_estimate())
+        auto_points_check.toggled.connect(lambda _checked: refresh_estimate())
+        points_spin.valueChanged.connect(lambda _value: refresh_estimate(update_points=False))
+
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        form.addRow("Preset", preset_combo)
+        form.addRow("Start", low_spin)
+        form.addRow("Stop", high_spin)
+        form.addRow("RBW", rbw_combo)
+
+        point_row = QHBoxLayout()
+        point_row.addWidget(points_spin)
+        point_row.addWidget(auto_points_check)
+
+        form.addRow("Points", point_row)
+        form.addRow("Acquisition", acquisition_combo)
+        form.addRow("", sync_check)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        if startup:
+            buttons.button(QDialogButtonBox.Ok).setText("Good to Go")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        layout.addWidget(intro)
+        layout.addLayout(form)
+        layout.addWidget(estimate_label)
+        layout.addWidget(buttons)
+        dialog.setStyleSheet(self.stylesheet())
+        refresh_estimate(update_points=False)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        label, _preset_low, _preset_high = preset_combo.currentData()
+        low = float(low_spin.value())
+        high = float(high_spin.value())
+        if high <= low:
+            self.show_error("Scan stop frequency must be greater than scan start frequency.")
+            return
+        if high - low < 0.1:
+            self.show_error("Scan range must be at least 0.1 MHz wide.")
+            return
+
+        self.apply_scan_profile(
+            ScanProfile(
+                label=str(label),
+                low_mhz=low,
+                high_mhz=high,
+                rbw_khz=selected_rbw(),
+                points=int(points_spin.value()),
+                acquisition_mode=str(acquisition_combo.currentData()),
+                sync_device_sweep=bool(sync_check.isChecked()),
+            )
+        )
+
+    def request_retune_range_preset(self, label, low_mhz, high_mhz):
+        if self.demo_mode:
+            self.show_error("Demo Mode cannot retune hardware. Connect a tinySA first.")
+            return
+        if not self.connected or self.worker is None:
+            self.show_error("Connect a tinySA before retuning its frequency range.")
+            return
+
+        answer = self.QMessageBox.question(
+            self.window,
+            "Retune tinySA",
+            (
+                f"Retune tinySA to {label}?\n\n"
+                f"Range: {low_mhz:.3f}–{high_mhz:.3f} MHz\n\n"
+                "This is experimental and will briefly pause scanning while RF Bridge "
+                "sends range commands and verifies the frequency readback."
+            ),
+            self.QMessageBox.Yes | self.QMessageBox.No,
+            self.QMessageBox.No,
+        )
+        if answer != self.QMessageBox.Yes:
+            return
+
+        self.show_device_notice(
+            f"Retuning tinySA to {low_mhz:.3f}–{high_mhz:.3f} MHz..."
+        )
+        self.update_connection_state(True, "Retuning...")
+        self.QMetaObject.invokeMethod(
+            self.worker,
+            "retune_range",
+            self.Qt.QueuedConnection,
+            self.Q_ARG(str, str(label)),
+            self.Q_ARG(float, float(low_mhz)),
+            self.Q_ARG(float, float(high_mhz)),
+        )
+
+    def prompt_custom_retune_range(self):
+        from PySide6.QtWidgets import (
+            QDialog,
+            QDialogButtonBox,
+            QDoubleSpinBox,
+            QFormLayout,
+            QLabel,
+            QLineEdit,
+            QVBoxLayout,
+        )
+
+        freqs_mhz = self.freqs_mhz or self.live_freqs_mhz
+        current_low = min(freqs_mhz) if freqs_mhz else 470.0
+        current_high = max(freqs_mhz) if freqs_mhz else 608.0
+
+        dialog = QDialog(self.window)
+        dialog.setWindowTitle("Retune tinySA")
+        dialog.setMinimumWidth(420)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel("Choose the sweep range RF Bridge should ask the tinySA to park on.")
+        intro.setWordWrap(True)
+
+        name_edit = QLineEdit("Custom")
+        low_spin = QDoubleSpinBox()
+        low_spin.setRange(100.0, 1200.0)
+        low_spin.setDecimals(3)
+        low_spin.setSingleStep(1.0)
+        low_spin.setSuffix(" MHz")
+        low_spin.setValue(float(current_low))
+        high_spin = QDoubleSpinBox()
+        high_spin.setRange(100.0, 1200.0)
+        high_spin.setDecimals(3)
+        high_spin.setSingleStep(1.0)
+        high_spin.setSuffix(" MHz")
+        high_spin.setValue(float(current_high))
+
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        form.addRow("Band name", name_edit)
+        form.addRow("Low", low_spin)
+        form.addRow("High", high_spin)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(intro)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+        dialog.setStyleSheet(self.stylesheet())
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+        label = name_edit.text().strip() or "Custom"
+        low = float(low_spin.value())
+        high = float(high_spin.value())
+        if high <= low:
+            self.show_error("Retune high frequency must be greater than low frequency.")
+            return
+        if high - low < 1.0:
+            self.show_error("Retune range must be at least 1 MHz wide.")
+            return
+        self.request_retune_range_preset(label, low, high)
 
     def show_plot_context_menu(self, event):
         from PySide6.QtGui import QCursor
@@ -1386,6 +1828,20 @@ class RFBridgeWindow:
                     lambda _checked=False, label=f"{family} {band}", lo=low, hi=high: self.apply_view_range_preset(label, lo, hi)
                 )
                 family_menu.addAction(action)
+
+        retune_menu = profiles_menu.addMenu("Retune tinySA Range (Experimental)")
+        for family, presets in SHURE_VIEW_RANGE_PRESETS:
+            family_menu = retune_menu.addMenu(family)
+            for band, low, high in presets:
+                action = self.QAction(f"{band} ({low:.0f}–{high:.0f} MHz)", self.window)
+                action.triggered.connect(
+                    lambda _checked=False, label=f"{family} {band}", lo=low, hi=high: self.request_retune_range_preset(label, lo, hi)
+                )
+                family_menu.addAction(action)
+        retune_menu.addSeparator()
+        custom_retune_action = self.QAction("Custom Range...", self.window)
+        custom_retune_action.triggered.connect(self.prompt_custom_retune_range)
+        retune_menu.addAction(custom_retune_action)
 
         tools_menu = self.window.menuBar().addMenu("Tools")
         mic_plot_action = self.QAction("Markers / Mic Plot…", self.window)
@@ -1799,6 +2255,15 @@ class RFBridgeWindow:
             "output_dir": self.output_dir,
             "storage_root": self.settings.get_storage_root(),
             "refresh_seconds": self.refresh_seconds,
+            "scan_profile": {
+                "label": self.scan_profile.label,
+                "low_mhz": self.scan_profile.low_mhz,
+                "high_mhz": self.scan_profile.high_mhz,
+                "rbw_khz": self.scan_profile.rbw_khz,
+                "points": self.scan_profile.points,
+                "acquisition_mode": self.scan_profile.acquisition_mode,
+                "sync_device_sweep": self.scan_profile.sync_device_sweep,
+            },
             "appearance": self.appearance,
             "markers": self.mic_markers,
             "capture_overlays": [capture.get("path") for capture in self.capture_overlays if capture.get("path")],
@@ -1844,6 +2309,19 @@ class RFBridgeWindow:
             self.settings.set_storage_root(str(storage_root))
         self.mic_markers = save_markers(self.settings, profile.get("markers", []))
         self.set_refresh_interval(float(profile.get("refresh_seconds", self.refresh_seconds)))
+        scan_profile_data = profile.get("scan_profile")
+        if isinstance(scan_profile_data, dict):
+            self.apply_scan_profile(
+                ScanProfile(
+                    label=str(scan_profile_data.get("label") or self.scan_profile.label),
+                    low_mhz=scan_profile_data.get("low_mhz", self.scan_profile.low_mhz),
+                    high_mhz=scan_profile_data.get("high_mhz", self.scan_profile.high_mhz),
+                    rbw_khz=normalize_rbw_khz(scan_profile_data.get("rbw_khz")),
+                    points=scan_profile_data.get("points", self.scan_profile.points),
+                    acquisition_mode=str(scan_profile_data.get("acquisition_mode", self.scan_profile.acquisition_mode)),
+                    sync_device_sweep=bool(scan_profile_data.get("sync_device_sweep", self.scan_profile.sync_device_sweep)),
+                )
+            )
         self.appearance = str(profile.get("appearance", self.appearance))
         self.settings.set_appearance(self.appearance)
         self.apply_theme()
@@ -2775,16 +3253,32 @@ class RFBridgeWindow:
         self.log_toggle_button.setText("▸ Log" if self.log_collapsed else "▾ Log")
 
     def toggle_compact_summary(self):
-        self.set_summary_compact(not self.summary_compact)
+        current_index = SUMMARY_DISPLAY_MODES.index(self.summary_display_mode)
+        self.set_summary_display_mode(SUMMARY_DISPLAY_MODES[(current_index + 1) % len(SUMMARY_DISPLAY_MODES)])
 
-    def set_summary_compact(self, compact):
-        self.summary_compact = bool(compact)
+    def set_summary_compact(self, compact, from_layout=False):
+        self.set_summary_display_mode("compact" if compact else "top4", from_layout=from_layout)
+
+    def set_summary_display_mode(self, mode, from_layout=False):
+        if mode not in SUMMARY_DISPLAY_MODES:
+            mode = "top4"
+        self.summary_display_mode = mode
+        self.summary_compact = mode == "compact"
         if self.summary_compact:
-            self.summary_label.setMaximumHeight(150 if self.window.width() < RESPONSIVE_TIGHT_WIDTH else 190)
-            self.compact_summary_button.setText("Full Summary")
+            if self.connection_panel_in_side:
+                max_height = 235
+            else:
+                max_height = 150 if self.window.width() < RESPONSIVE_TIGHT_WIDTH else 190
+            self.summary_label.setMaximumHeight(max_height)
+            self.compact_summary_button.setText("Compact")
         else:
             self.summary_label.setMaximumHeight(16777215)
-            self.compact_summary_button.setText("Compact Summary")
+            self.compact_summary_button.setText("Top 8" if mode == "top8" else "Top 4")
+        if not from_layout:
+            self.summary_compact_user_selected = self.summary_compact
+            self.summary_display_mode_user_selected = self.summary_display_mode
+            self.settings.set("summary_compact", self.summary_compact_user_selected)
+            self.settings.set("summary_display_mode", self.summary_display_mode)
         self.update_top_frequencies(self.display_dbm or self.latest_dbm)
 
     def update_connection_detail_visibility(self):
@@ -2817,13 +3311,22 @@ class RFBridgeWindow:
             self.peak_button.setText(f"Peak {peak_label}")
             self.reset_button.setText("Reset")
             self.refresh_button.setText(refresh_label)
-            self.freeze_button.setText("Resume" if self.frozen else "Freeze")
+            if self.pause_pending:
+                self.freeze_button.setText("Pausing...")
+            else:
+                self.freeze_button.setText("Resume" if self.frozen else "Pause")
             self.return_live_button.setText("Live")
         else:
             self.peak_button.setText(f"  Peak {peak_label}")
             self.reset_button.setText("  Reset")
             self.refresh_button.setText(f"  {refresh_label}")
-            self.freeze_button.setText("  Resume" if self.frozen else "  Freeze")
+            if self.pause_pending:
+                pause_label = "  Pausing..."
+            elif self.frozen:
+                pause_label = "  Resume"
+            else:
+                pause_label = "  Pause Sweep"
+            self.freeze_button.setText(pause_label)
             self.return_live_button.setText("  Return to Live")
 
     def update_tight_connection_chrome(self):
@@ -2919,8 +3422,10 @@ class RFBridgeWindow:
             self.port_combo.setMinimumWidth(140)
             self.port_combo.setMaximumWidth(330)
             self.connect_button.setMaximumHeight(28)
+            self.scan_setup_button.setMaximumHeight(28)
             self.refresh_ports_button.setMaximumHeight(28)
             self.disconnect_button.setMaximumHeight(28)
+            self.scan_progress.setFixedHeight(0)
             for button in (
                 self.peak_button,
                 self.reset_button,
@@ -2933,7 +3438,7 @@ class RFBridgeWindow:
             self.refresh_button.setMaximumWidth(84)
             self.device_info_label.setFixedHeight(0)
             self.device_notice_label.setFixedHeight(0)
-            self.set_summary_compact(True)
+            self.set_summary_compact(True, from_layout=True)
             if not self.log_collapsed:
                 self.responsive_forced_log_collapse = True
                 self.set_log_collapsed(True)
@@ -2949,8 +3454,10 @@ class RFBridgeWindow:
             self.port_combo.setMinimumWidth(175)
             self.port_combo.setMaximumWidth(420)
             self.connect_button.setMaximumHeight(28)
+            self.scan_setup_button.setMaximumHeight(28)
             self.refresh_ports_button.setMaximumHeight(28)
             self.disconnect_button.setMaximumHeight(28)
+            self.scan_progress.setFixedHeight(0)
             for button in (
                 self.peak_button,
                 self.reset_button,
@@ -2962,7 +3469,7 @@ class RFBridgeWindow:
                 button.setMaximumWidth(16777215)
             self.device_info_label.setFixedHeight(0)
             self.device_notice_label.setFixedHeight(0)
-            self.set_summary_compact(True)
+            self.set_summary_compact(True, from_layout=True)
             if not self.log_collapsed:
                 self.responsive_forced_log_collapse = True
                 self.set_log_collapsed(True)
@@ -2971,7 +3478,7 @@ class RFBridgeWindow:
             self.connection_layout.setContentsMargins(10, 8, 10, 8)
             self.connection_layout.setVerticalSpacing(4)
             self.connection_panel.setFixedWidth(340)
-            self.connection_panel.setFixedHeight(185)
+            self.connection_panel.setFixedHeight(224)
             self.side_panel.setFixedWidth(315)
             self.hover_label.setVisible(True)
             self.status_label.setFixedHeight(42)
@@ -2979,8 +3486,10 @@ class RFBridgeWindow:
             self.port_combo.setMinimumWidth(200)
             self.port_combo.setMaximumWidth(300)
             self.connect_button.setMaximumHeight(28)
+            self.scan_setup_button.setMaximumHeight(28)
             self.refresh_ports_button.setMaximumHeight(28)
             self.disconnect_button.setMaximumHeight(28)
+            self.scan_progress.setFixedHeight(8)
             for button in (
                 self.peak_button,
                 self.reset_button,
@@ -2989,15 +3498,15 @@ class RFBridgeWindow:
                 self.return_live_button,
             ):
                 button.setMaximumWidth(16777215)
-            self.device_info_label.setFixedHeight(40)
+            self.device_info_label.setFixedHeight(64)
             self.device_notice_label.setFixedHeight(42)
-            self.set_summary_compact(True)
+            self.set_summary_display_mode(self.summary_display_mode_user_selected, from_layout=True)
         else:
             self.compact_button_row.setSpacing(8)
             self.connection_layout.setContentsMargins(10, 8, 10, 8)
             self.connection_layout.setVerticalSpacing(4)
             self.connection_panel.setFixedWidth(360)
-            self.connection_panel.setFixedHeight(195)
+            self.connection_panel.setFixedHeight(234)
             self.side_panel.setFixedWidth(360)
             self.side_panel.setVisible(True)
             self.hover_label.setVisible(True)
@@ -3006,8 +3515,10 @@ class RFBridgeWindow:
             self.port_combo.setMinimumWidth(205)
             self.port_combo.setMaximumWidth(310)
             self.connect_button.setMaximumHeight(28)
+            self.scan_setup_button.setMaximumHeight(28)
             self.refresh_ports_button.setMaximumHeight(28)
             self.disconnect_button.setMaximumHeight(28)
+            self.scan_progress.setFixedHeight(10)
             for button in (
                 self.peak_button,
                 self.reset_button,
@@ -3016,10 +3527,9 @@ class RFBridgeWindow:
                 self.return_live_button,
             ):
                 button.setMaximumWidth(16777215)
-            self.device_info_label.setFixedHeight(42)
+            self.device_info_label.setFixedHeight(64)
             self.device_notice_label.setFixedHeight(44)
-            if self.summary_compact:
-                self.set_summary_compact(False)
+            self.set_summary_display_mode(self.summary_display_mode_user_selected, from_layout=True)
             if self.responsive_forced_log_collapse:
                 self.responsive_forced_log_collapse = False
                 self.set_log_collapsed(False)
@@ -3033,17 +3543,23 @@ class RFBridgeWindow:
         self.port_combo.clear()
         self.port_map = {}
         self.port_combo.addItem("Demo Mode — simulated RF scan", DEMO_PORT)
+        self.port_combo.setItemData(0, "Demo Mode — simulated RF scan", self.Qt.ToolTipRole)
         ports = candidate_serial_ports()
         for port in ports:
-            label = describe_port(port)
+            full_label = describe_port(port)
+            label = self.compact_port_label(port)
             self.port_combo.addItem(label, port.device)
-            self.port_map[port.device] = label
+            item_index = self.port_combo.count() - 1
+            self.port_combo.setItemData(item_index, full_label, self.Qt.ToolTipRole)
+            self.port_map[port.device] = full_label
         if not ports:
             self.port_combo.addItem("No serial ports found", None)
+            self.port_combo.setItemData(self.port_combo.count() - 1, "No serial ports found", self.Qt.ToolTipRole)
         if current:
             index = self.port_combo.findData(current)
             if index < 0:
-                self.port_combo.addItem(f"Manual: {current}", current)
+                self.port_combo.addItem(f"Manual · {os.path.basename(str(current))}", current)
+                self.port_combo.setItemData(self.port_combo.count() - 1, f"Manual: {current}", self.Qt.ToolTipRole)
                 index = self.port_combo.findData(current)
             if index >= 0:
                 self.port_combo.setCurrentIndex(index)
@@ -3090,7 +3606,8 @@ class RFBridgeWindow:
 
         index = self.port_combo.findData(port)
         if index < 0:
-            self.port_combo.addItem(f"Manual: {port}", port)
+            self.port_combo.addItem(f"Manual · {os.path.basename(str(port))}", port)
+            self.port_combo.setItemData(self.port_combo.count() - 1, f"Manual: {port}", self.Qt.ToolTipRole)
             index = self.port_combo.findData(port)
         if index < 0:
             self.log(f"Auto-detected tinySA: {port}; select it manually to connect")
@@ -3134,18 +3651,26 @@ class RFBridgeWindow:
         self.worker_disconnected = False
         self.scan_mismatch_count = 0
         self.worker_thread = self.QThread()
-        self.worker = ScanWorker(port, self.refresh_seconds, debug_serial=self.debug_serial)
+        self.worker = ScanWorker(
+            port,
+            self.refresh_seconds,
+            debug_serial=self.debug_serial,
+            scan_profile=self.scan_profile,
+        )
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.start)
         self.worker.connected.connect(self.ui_bridge.connected)
         self.worker.scan_ready.connect(self.ui_bridge.scan_ready)
         self.worker.error.connect(self.ui_bridge.error)
         self.worker.reconnecting.connect(self.ui_bridge.reconnecting)
+        self.worker.retuned.connect(self.ui_bridge.retuned)
+        self.worker.retune_failed.connect(self.ui_bridge.retune_failed)
+        self.worker.scan_progress.connect(self.ui_bridge.scan_progress)
+        self.worker.scan_timing.connect(self.ui_bridge.scan_timing)
+        self.ui_bridge.apply_scan_profile.connect(self.worker.set_scan_profile)
         self.worker.log.connect(self.ui_bridge.log)
         self.worker.disconnected.connect(self.ui_bridge.disconnected)
         self.worker.disconnected.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self.worker.deleteLater)
-        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
         self.worker_thread.finished.connect(self.clear_worker_refs)
         self.update_connection_state(False, "Connecting…")
         self.worker_thread.start()
@@ -3157,7 +3682,15 @@ class RFBridgeWindow:
             return
 
         if self.worker is not None:
+            if self.disconnect_pending:
+                return
             self.disconnect_pending = True
+            self.pause_pending = False
+            self.scan_progress.setVisible(False)
+            try:
+                self.worker.request_stop()
+            except Exception:
+                pass
             self.update_connection_state(False, "Disconnecting…")
             self.QMetaObject.invokeMethod(
                 self.worker,
@@ -3183,16 +3716,17 @@ class RFBridgeWindow:
             return
 
         thread = self.worker_thread
+        worker = self.worker
+        retired = (thread, worker)
+        self.retired_worker_threads.append(retired)
         try:
             thread.finished.disconnect(self.clear_worker_refs)
         except Exception:
             pass
 
-        self.retired_worker_threads.append(thread)
-
         def forget_thread():
             try:
-                self.retired_worker_threads.remove(thread)
+                self.retired_worker_threads.remove(retired)
             except ValueError:
                 pass
 
@@ -3201,7 +3735,6 @@ class RFBridgeWindow:
             thread.quit()
         except Exception:
             pass
-
         self.worker = None
         self.worker_thread = None
         self.disconnect_pending = False
@@ -3296,9 +3829,7 @@ class RFBridgeWindow:
         self.demo_connect_pending = True
         self.force_disconnected_actions = False
         self.selected_port = "Demo Mode"
-        self.device_info_label.setText(
-            f"Device: Demo Mode\nRange: {self.demo_low_mhz:.3f}–{self.demo_high_mhz:.3f} MHz"
-        )
+        self.update_device_info_label("Demo Mode")
         self.show_device_notice("Preparing simulated RF scan…")
         self.update_connection_state(False, "Connecting…")
         self.disconnect_button.setText("Disconnect Demo")
@@ -3329,7 +3860,7 @@ class RFBridgeWindow:
         self.lock_plot_axes(preserve_x=True)
         self.update_frequency_range_labels()
         self.cursor_line.setPos(self.freqs_mhz[0])
-        self.device_info_label.setText(f"Device: Demo Mode\nRange: {low:.3f}–{high:.3f} MHz")
+        self.update_device_info_label("Demo Mode", self.freqs_mhz)
         self.show_device_notice("Demo Mode is visual only. No CSV files are written.")
         self.update_connection_state(True, "Connected")
         self.disconnect_button.setText("Disconnect Demo")
@@ -3352,6 +3883,7 @@ class RFBridgeWindow:
         self.connected = False
         self.selected_port = None
         self.active_port = None
+        self.last_reference_shift = None
         self.latest_dbm = []
         self.display_dbm = []
         self.live_freqs_mhz = []
@@ -3471,6 +4003,8 @@ class RFBridgeWindow:
         self.scan_mismatch_count = 0
         self.scan_error_count = 0
         self.reconnect_attempt_count = 0
+        self.last_reference_shift = None
+        self.last_reference_shift_notice_time = 0.0
         self.active_port = port
         self.connected = True
         self.selected_port = port
@@ -3485,14 +4019,82 @@ class RFBridgeWindow:
         self.update_frequency_range_labels()
         self.cursor_line.setPos(freqs_mhz[0])
         self.render_mic_markers()
-        self.device_info_label.setText(
-            f"Device: {version or 'tinySA'}\n"
-            f"Range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz"
-        )
+        self.update_device_info_label(version or "tinySA", freqs_mhz)
         self.clear_device_notice()
         self.update_connection_state(True, "Connected")
         self.disconnect_button.setText("Disconnect tinySA")
-        self.log(f"Frequency range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz")
+        self.log(
+            f"Frequency range: {min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz "
+            f"({len(freqs_mhz)} points)"
+        )
+
+    def on_retuned(self, label, low_mhz, high_mhz, freqs_mhz):
+        if not freqs_mhz:
+            self.on_retune_failed("tinySA retuned, but RF Bridge did not receive a frequency table.")
+            return
+
+        self.scan_mismatch_count = 0
+        self.scan_error_count = 0
+        self.freqs_mhz = freqs_mhz
+        self.live_freqs_mhz = freqs_mhz.copy()
+        self.latest_dbm = []
+        self.display_dbm = []
+        self.reset_peaks()
+        self.live_curve.setData([], [])
+        self.peak_curve.setData([], [])
+        self.plot.setXRange(min(freqs_mhz), max(freqs_mhz), padding=0)
+        self.lock_plot_axes(preserve_x=True)
+        self.update_frequency_range_labels()
+        self.cursor_line.setPos(freqs_mhz[0])
+        self.render_mic_markers()
+        self.update_device_info_label(self.device_name or "tinySA", freqs_mhz)
+        self.clear_device_notice()
+        self.update_connection_state(True, "Connected")
+        self.log(
+            f"Retune confirmed for {label}: "
+            f"{min(freqs_mhz):.3f}–{max(freqs_mhz):.3f} MHz"
+        )
+        self.apply_view_range_preset(label, low_mhz, high_mhz)
+
+    def on_retune_failed(self, message):
+        self.clear_device_notice()
+        if self.connected:
+            self.update_connection_state(True, "Connected")
+        self.log(message)
+        self.show_error(message)
+
+    def on_scan_progress(self, percent, points, message):
+        if self.demo_mode:
+            return
+        percent = max(0, min(int(percent), 100))
+        self.scan_progress.setVisible(percent < 100)
+        self.scan_progress.setValue(percent)
+        if percent < 100:
+            status_message = "Pausing after sweep" if self.pause_pending else message
+            self.update_connection_state(True, f"{status_message} {percent}%")
+            self.status_label.setText(
+                f"{status_message}: {percent}%   |   {points:,} points   |   {self.scan_profile.label}"
+            )
+        elif self.connected:
+            if self.pause_pending:
+                self.pause_pending = False
+                self.update_scan_control_labels()
+            self.update_connection_state(True, "Connected")
+            self.QTimer.singleShot(700, lambda: self.scan_progress.setVisible(False))
+
+    def on_scan_timing(self, scan_seconds, recommended_seconds):
+        self.last_scan_duration_seconds = float(scan_seconds)
+        if recommended_seconds > self.refresh_seconds + 0.05:
+            self.refresh_seconds = float(recommended_seconds)
+            self.settings.set("refresh_seconds", self.refresh_seconds)
+            self.update_scan_control_labels()
+            self.log(
+                "Refresh adjusted to "
+                f"{format_seconds(self.refresh_seconds)}s after measured "
+                f"{format_seconds(scan_seconds)}s scan"
+            )
+        self.update_device_info_label()
+        self.update_status()
 
     def on_disconnected(self):
         was_connected = self.connected
@@ -3500,10 +4102,13 @@ class RFBridgeWindow:
         self.pending_disconnect_status = None
         self.connected = False
         self.active_port = None
+        self.pause_pending = False
+        self.frozen = False
         self.scan_mismatch_count = 0
-        self.disconnect_pending = False
+        self.last_reference_shift = None
         self.worker_disconnected = True
         self.retire_worker_refs_after_disconnect()
+        self.update_scan_control_labels()
         self.update_connection_state(False, status_text)
         self.render_mic_markers()
         if was_connected:
@@ -3541,7 +4146,7 @@ class RFBridgeWindow:
             self.log(message_text)
             self.mark_device_unavailable(
                 "Reconnect failed",
-                "tinySA stopped responding and RF Bridge could not reconnect. Unplug/replug or power-cycle the tinySA, then click Connect again.",
+                "tinySA stopped responding and RF Bridge could not reconnect. If using a USB-C/Thunderbolt hub or dock, unplug/replug the hub-side cable or power-cycle the tinySA, then click Connect again.",
             )
             return
 
@@ -3549,7 +4154,7 @@ class RFBridgeWindow:
             self.log("tinySA disconnected or stopped responding")
             self.mark_device_unavailable(
                 "tinySA unavailable",
-                "tinySA disconnected or stopped responding. Unplug/replug or power-cycle it, then click Connect again.",
+                "tinySA disconnected or stopped responding. If using a USB-C/Thunderbolt hub or dock, unplug/replug the hub-side cable or power-cycle it, then click Connect again.",
             )
             return
 
@@ -3599,13 +4204,17 @@ class RFBridgeWindow:
             status_color = self.theme["connected"]
         else:
             status_color = self.theme["disconnected"]
-        self.status_dot.setStyleSheet(f"color: {status_color};")
+        self.status_dot.setText(f'<span style="color: {status_color};">●</span>')
         self.connection_status.setText(status_text)
-        self.connection_status.setStyleSheet(
-            f"background: {self.theme['hover_bg']}; color: {status_color}; "
-            f"border: 1px solid {status_color}; border-radius: 12px; "
-            "padding: 3px 10px; font-weight: bold; font-size: 14px;"
-        )
+        if is_connecting:
+            connection_state = "connecting"
+        elif connected:
+            connection_state = "connected"
+        else:
+            connection_state = "disconnected"
+        self.connection_status.setProperty("state", connection_state)
+        self.connection_status.style().unpolish(self.connection_status)
+        self.connection_status.style().polish(self.connection_status)
         self.sidebar_connection_label.setText(status_text)
         device_name = "Demo Mode" if (self.demo_mode or self.demo_connect_pending) else (self.device_name if connected else "—")
         self.sidebar_device_label.setText(f"Device: {device_name}")
@@ -3625,7 +4234,7 @@ class RFBridgeWindow:
         self.port_combo.setEnabled(not controls_busy)
         self.update_compact_control_labels()
         if not connected and not self.demo_connect_pending:
-            self.device_info_label.setText("Device: —\nRange: —")
+            self.update_device_info_label("—")
             self.disconnect_button.setText("Disconnect")
             if self.worker is None and not self.demo_mode:
                 self.update_frequency_range_labels([])
@@ -3736,8 +4345,34 @@ class RFBridgeWindow:
 
     def toggle_freeze(self):
         self.frozen = not self.frozen
+        self.pause_pending = bool(
+            self.frozen
+            and self.worker is not None
+            and not self.demo_mode
+            and self.scan_profile.acquisition_mode == ACQUISITION_SCANRAW
+            and self.scan_progress.isVisible()
+        )
         self.update_scan_control_labels()
-        self.log("Trace frozen" if self.frozen else "Trace resumed")
+        if self.worker is not None and not self.demo_mode:
+            self.QMetaObject.invokeMethod(
+                self.worker,
+                "set_paused",
+                self.Qt.QueuedConnection,
+                self.Q_ARG(bool, bool(self.frozen)),
+            )
+        if self.demo_timer is not None:
+            if self.frozen:
+                self.demo_timer.stop()
+            else:
+                self.demo_timer.start(int(self.refresh_seconds * 1000))
+        if self.pause_pending:
+            self.update_connection_state(True, "Pausing after sweep")
+            self.show_device_notice("Pausing after current high-resolution sweep completes.")
+            self.log("Pause requested; finishing current high-resolution sweep")
+        else:
+            if not self.frozen:
+                self.clear_device_notice()
+            self.log("Scan paused" if self.frozen else "Scan resumed")
         if not self.frozen and self.latest_dbm and self.freqs_mhz:
             self.render_scan(self.latest_dbm)
 
@@ -3784,6 +4419,48 @@ class RFBridgeWindow:
         self.lock_plot_axes(preserve_x=True)
         self.update_hover_label(None)
 
+    def detect_reference_shift(self, dbm):
+        if self.demo_mode or not self.latest_dbm or len(self.latest_dbm) != len(dbm):
+            return
+
+        deltas = [
+            float(current) - float(previous)
+            for previous, current in zip(self.latest_dbm, dbm)
+        ]
+        sorted_deltas = sorted(deltas)
+        median_delta = sorted_deltas[len(sorted_deltas) // 2]
+        if abs(median_delta) < REFERENCE_SHIFT_MIN_DB:
+            self.last_reference_shift = None
+            return
+
+        coherent_bins = sum(
+            1
+            for delta in deltas
+            if abs(delta - median_delta) <= REFERENCE_SHIFT_BIN_TOLERANCE_DB
+        )
+        coherent_ratio = coherent_bins / max(len(deltas), 1)
+        if coherent_ratio < REFERENCE_SHIFT_COHERENT_RATIO:
+            return
+
+        now = time.time()
+        self.last_reference_shift = {
+            "time": now,
+            "delta": median_delta,
+            "ratio": coherent_ratio,
+        }
+        if now - self.last_reference_shift_notice_time < REFERENCE_SHIFT_NOTICE_COOLDOWN_SECONDS:
+            return
+
+        self.last_reference_shift_notice_time = now
+        direction = "up" if median_delta > 0 else "down"
+        message = (
+            "Possible tinySA reference shift: median floor moved "
+            f"{direction} {abs(median_delta):.1f} dB across "
+            f"{coherent_ratio:.0%} of scan bins. RF Bridge did not alter the scan data."
+        )
+        self.log(message)
+        self.show_device_notice(message)
+
     def on_scan_ready(self, dbm):
         self.scan_error_count = 0
         self.last_scan_received_time = time.time()
@@ -3805,7 +4482,13 @@ class RFBridgeWindow:
                 )
             return
         self.scan_mismatch_count = 0
+        self.detect_reference_shift(dbm)
         self.latest_dbm = dbm
+        if self.pause_pending and self.frozen:
+            self.pause_pending = False
+            self.clear_device_notice()
+            self.update_scan_control_labels()
+            self.log("Scan paused")
         if self.capture_mode:
             self.return_live_button.setEnabled(True)
         else:
@@ -3831,6 +4514,7 @@ class RFBridgeWindow:
             )
             self.last_save_time = now
             self.log(f"Saved scan: {os.path.basename(filename)}")
+        self.update_device_info_label()
         self.update_status(now)
 
     def render_scan(self, dbm):
@@ -3859,6 +4543,64 @@ class RFBridgeWindow:
         self.lock_plot_axes(preserve_x=True)
         self.plot.setTitle(f"RF Bridge - {self.gig_slug} - {time_12h()}", color=self.theme["text"], size="16pt")
 
+    def top_hit_spacing_mhz(self):
+        if len(self.freqs_mhz) >= 2:
+            bin_step_mhz = abs(float(self.freqs_mhz[-1]) - float(self.freqs_mhz[0])) / max(len(self.freqs_mhz) - 1, 1)
+        else:
+            bin_step_mhz = self.scan_step_khz() / 1000.0
+        rbw_spacing_mhz = 0.0
+        if self.scan_profile.rbw_khz is not None:
+            rbw_spacing_mhz = (float(self.scan_profile.rbw_khz) / 1000.0) * 2.0
+        return max(TOP_HIT_DEFAULT_SPACING_MHZ, bin_step_mhz * 6.0, rbw_spacing_mhz)
+
+    def clustered_top_hits(self, dbm, max_hits=8):
+        if not dbm or not self.freqs_mhz:
+            return []
+        median_floor = sorted(dbm)[len(dbm) // 2]
+        spacing_mhz = self.top_hit_spacing_mhz()
+        min_peak_level = median_floor + TOP_HIT_MIN_PROMINENCE_DB
+        candidates = heapq.nlargest(len(dbm), zip(range(len(dbm)), self.freqs_mhz, dbm), key=lambda item: item[2])
+        hits = []
+        for index, freq, level in candidates:
+            if level < min_peak_level and hits:
+                continue
+            if any(abs(freq - hit["freq"]) < spacing_mhz for hit in hits):
+                continue
+            threshold = max(median_floor + TOP_HIT_MIN_PROMINENCE_DB, float(level) - 6.0)
+            left = index
+            while left > 0 and float(dbm[left - 1]) >= threshold:
+                left -= 1
+            right = index
+            while right + 1 < len(dbm) and float(dbm[right + 1]) >= threshold:
+                right += 1
+            width_khz = max(0.0, (float(self.freqs_mhz[right]) - float(self.freqs_mhz[left])) * 1000.0)
+            hits.append({
+                "freq": float(freq),
+                "level": float(level),
+                "width_khz": width_khz,
+                "bins": (right - left) + 1,
+            })
+            if len(hits) >= max_hits:
+                break
+        if len(hits) < max_hits:
+            if len(self.freqs_mhz) >= 2:
+                bin_step_mhz = abs(float(self.freqs_mhz[-1]) - float(self.freqs_mhz[0])) / max(len(self.freqs_mhz) - 1, 1)
+            else:
+                bin_step_mhz = self.scan_step_khz() / 1000.0
+            fallback_spacing_mhz = max(bin_step_mhz * 2.0, 0.001)
+            for index, freq, level in candidates:
+                if any(abs(freq - hit["freq"]) < fallback_spacing_mhz for hit in hits):
+                    continue
+                hits.append({
+                    "freq": float(freq),
+                    "level": float(level),
+                    "width_khz": 0.0,
+                    "bins": 1,
+                })
+                if len(hits) >= max_hits:
+                    break
+        return hits
+
     def update_top_frequencies(self, dbm):
         if not dbm:
             self.summary_label.setText("RF SUMMARY\n──────────────────────\n\nConnect to tinySA to begin.")
@@ -3869,11 +4611,23 @@ class RFBridgeWindow:
             return
 
         median_floor = sorted(dbm)[len(dbm) // 2]
-        strongest = heapq.nlargest(8, zip(self.freqs_mhz, dbm), key=lambda pair: pair[1])
+        marker_hits = self.clustered_top_hits(dbm, max_hits=8)
+        constrained_summary = (
+            self.connection_panel_in_side
+            or self.responsive_mode in ("tight", "compact", "medium")
+            or self.summary_label.height() < 360
+        )
+        if self.summary_display_mode == "top8":
+            summary_hit_count = 8
+        elif self.summary_compact:
+            summary_hit_count = 3
+        else:
+            summary_hit_count = 4
+        strongest = marker_hits[:summary_hit_count]
         compact_hit_count = 1 if self.responsive_mode == "tight" else 2 if self.responsive_mode == "compact" else 3
         compact_hits = " | ".join(
-            f"{snap_display_frequency(freq):.3f} {level:.1f}"
-            for freq, level in strongest[:compact_hit_count]
+            f"{snap_display_frequency(hit['freq']):.3f} {hit['level']:.1f}"
+            for hit in marker_hits[:compact_hit_count]
         )
         self.compact_summary_label.setText(
             f"Floor {median_floor:.1f} dBm   |   Top {compact_hits}"
@@ -3882,20 +4636,19 @@ class RFBridgeWindow:
             text = "RF SUMMARY\n────────────────\n"
             text += f"Floor {median_floor:.2f} dBm\n"
             text += "TOP RF HITS\n"
-            for i, (freq, level) in enumerate(strongest[:3], start=1):
-                display_freq = snap_display_frequency(freq)
-                text += f"{i}. {display_freq:.3f}  {level:.1f} dBm\n"
+            for i, hit in enumerate(strongest, start=1):
+                display_freq = snap_display_frequency(hit["freq"])
+                text += f"{i}. {display_freq:.3f}  {hit['level']:.1f} dBm\n"
             self.summary_label.setText(text)
         else:
-            text = "RF SUMMARY\n──────────────────────\n\n"
-            text += "Median Floor\n"
-            text += f"{median_floor:7.2f} dBm\n\n"
-            text += "TOP 8 RF HITS\n──────────────────────\n"
-            for i, (freq, level) in enumerate(strongest, start=1):
-                display_freq = snap_display_frequency(freq)
-                text += f"{i}. {display_freq:9.3f} MHz  {level:7.2f} dBm\n"
+            text = "RF SUMMARY\n──────────────────────\n"
+            text += f"Floor {median_floor:7.2f} dBm\n"
+            text += f"TOP {summary_hit_count} RF EVENTS\n──────────────────────\n"
+            for i, hit in enumerate(strongest, start=1):
+                display_freq = snap_display_frequency(hit["freq"])
+                text += f"{i}. {display_freq:9.3f} MHz  {hit['level']:7.2f} dBm\n"
             self.summary_label.setText(text)
-        while len(self.top_markers) < len(strongest):
+        while len(self.top_markers) < len(marker_hits):
             marker = self.pg.InfiniteLine(
                 angle=90,
                 pen=self.pg.mkPen(self.theme["marker"], width=1, style=self.Qt.DotLine),
@@ -3903,11 +4656,11 @@ class RFBridgeWindow:
             marker.setZValue(-10)
             self.plot.addItem(marker, ignoreBounds=True)
             self.top_markers.append(marker)
-        for marker, (freq, _level) in zip(self.top_markers, strongest):
+        for marker, hit in zip(self.top_markers, marker_hits):
             marker.setPen(self.pg.mkPen(self.theme["marker"], width=1, style=self.Qt.DotLine))
-            marker.setPos(freq)
+            marker.setPos(hit["freq"])
             marker.setVisible(True)
-        for marker in self.top_markers[len(strongest):]:
+        for marker in self.top_markers[len(marker_hits):]:
             marker.setVisible(False)
 
     def update_hover_label(self, idx):
@@ -3978,6 +4731,9 @@ class RFBridgeWindow:
         last_scan_label = "never"
         if self.last_scan_received_time:
             last_scan_label = f"{int(max(0, now - self.last_scan_received_time))}s ago"
+        duration_label = "n/a"
+        if self.last_scan_duration_seconds is not None:
+            duration_label = f"{format_seconds(self.last_scan_duration_seconds)}s"
         if self.demo_mode or self.demo_connect_pending:
             full_status = (
                 f"Mode: {freeze_label}   |   CSV: disabled   |   "
@@ -3996,10 +4752,14 @@ class RFBridgeWindow:
         folder_label = os.path.basename(os.path.normpath(self.output_dir)) or self.output_dir
         latest_label = "latest_scan.csv" if self.last_save_time else "waiting"
         port_label = os.path.basename(str(active_label)) if active_label else "—"
+        rbw_label = "Auto" if self.scan_profile.rbw_khz is None else f"{self.scan_profile.rbw_khz}k"
+        scan_label = f"{self.scan_profile.label} / {rbw_label} / {self.scan_profile.points} pts"
         full_status = (
             f"Folder: {folder_label}   |   Latest: {latest_label}   |   "
             f"Next: {minutes}:{seconds:02d}   |   Refresh: {format_seconds(self.refresh_seconds)}s   |   "
             f"Mode: {freeze_label}   |   Port: {active_label}   |   Last scan: {last_scan_label}   |   "
+            f"Scan duration: {duration_label}   |   "
+            f"Scan setup: {scan_label}   |   "
             f"Reconnects: {self.reconnect_attempt_count}   |   Mismatch: {self.scan_mismatch_count}   |   "
             f"Overlays: {overlay_count}   |   Auto: {auto_label}"
         )
@@ -4017,7 +4777,8 @@ class RFBridgeWindow:
             status = (
                 f"{folder_label}   |   {latest_label}   |   Next {minutes}:{seconds:02d}   |   "
                 f"{format_seconds(self.refresh_seconds)}s   |   {freeze_label}   |   "
-                f"{port_label}   |   Scan {last_scan_label}   |   R{self.reconnect_attempt_count} M{self.scan_mismatch_count}"
+                f"{port_label}   |   Scan {last_scan_label}/{duration_label}   |   {self.scan_profile.points} pts   |   "
+                f"R{self.reconnect_attempt_count} M{self.scan_mismatch_count}"
             )
         self.status_label.setText(status)
         self.status_label.setToolTip(full_status)
@@ -4106,12 +4867,20 @@ class RFBridgeWindow:
         return exit_code
 
 
-def run_ui(output_dir, gig_slug, ui_update_seconds=UI_UPDATE_SECONDS, selected_port=None, debug_serial=False):
+def run_ui(
+    output_dir,
+    gig_slug,
+    ui_update_seconds=UI_UPDATE_SECONDS,
+    selected_port=None,
+    debug_serial=False,
+    prompt_scan_setup_on_launch=True,
+):
     window = RFBridgeWindow(
         output_dir=output_dir,
         gig_slug=gig_slug,
         ui_update_seconds=ui_update_seconds,
         selected_port=selected_port,
         debug_serial=debug_serial,
+        prompt_scan_setup_on_launch=prompt_scan_setup_on_launch,
     )
     return window.run()

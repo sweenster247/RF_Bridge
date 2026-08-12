@@ -22,6 +22,20 @@ RF Bridge is designed for practical RF workflows in the field, whether you’re 
 
 The goal is simple: get visibility into the RF environment fast. Plug in a tinySA and start understanding the spectrum before the truck doors even open.
 
+## What’s New in v2.1.0
+
+- Added `Setup` for selecting target range, RBW, acquisition mode, and sweep points.
+- Added a startup scan setup step so the launch flow is `Gig name -> Scan setup -> Good to Go`.
+- Added high-resolution tinySA Ultra+ USB scanning with `scanraw` and a visible progress bar.
+- Added modern Shure range presets for ULX-D, Axient Digital, and PSM workflows, plus custom range entry.
+- Added scan health readouts for bin spacing, points, RBW, measured scan duration, and learned refresh timing.
+- Changed RF Summary to cluster high-resolution bins into RF events with Top 4, Top 8, and Compact display modes.
+- Improved pause/disconnect handling during long high-resolution sweeps.
+- Improved reconnect tolerance for tinySA devices attached through USB-C/Thunderbolt hubs and docks.
+- Shortened the tinySA device selector while preserving full serial metadata in tooltips.
+- Kept the previous `data 1` display-trace route as Compatibility mode.
+- Added a diagnostic `--scanraw` probe for validating real tinySA USB output.
+
 ## What’s New in v2.0.1
 
 - Added Shure ULX-D and Axient Digital RF view presets under `Profiles > Set RF View Range`.
@@ -82,10 +96,11 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 - Real-time RF graphing
 - Bounded zoom and pan within the current frequency range
 - Shure ULX-D and Axient Digital RF view presets for quickly zooming to common band ranges
+- High-resolution RF event summary with clustered Top 4/Top 8 modes
 - Adjustable refresh intervals
 - Peak hold modes
-- Freeze Trace mode
-- RF summary display with Top RF Hits rounded to practical 0.005 MHz steps
+- Pause/resume scan workflow
+- RF summary display with Top RF Events rounded to practical 0.005 MHz steps
 
 ### Demo Mode
 - Prompted Demo Mode startup with selectable frequency ranges
@@ -105,7 +120,11 @@ The goal is simple: get visibility into the RF environment fast. Plug in a tinyS
 - Automatic tinySA detection
 - Manual port selection
 - Connect/disconnect controls
-- Frequency range detection
+- More patient reconnect handling for USB-C/Thunderbolt hubs and docks
+- Scan setup for range, RBW, acquisition mode, and point count
+- High-resolution tinySA Ultra+ `scanraw` acquisition
+- Compatibility display-trace acquisition
+- Scan health and progress display
 
 ### WWB Workflow Support
 - Continuous WWB-compatible CSV export
@@ -201,8 +220,8 @@ This builds the app, creates a DMG, and zips the `.app` bundle.
 Output artifacts:
 
 ```text
-dist/releases/RF-Bridge-v2.0.1-macOS-arm64.dmg
-dist/releases/RF-Bridge-v2.0.1-macOS-arm64.zip
+dist/releases/RF-Bridge-v2.1.0-macOS-arm64.dmg
+dist/releases/RF-Bridge-v2.1.0-macOS-arm64.zip
 ```
 
 Install `create-dmg` if needed:
